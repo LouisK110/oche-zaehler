@@ -100,6 +100,17 @@ button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
 .names{display:flex;flex-direction:column;gap:6px}
 .names input{font:inherit;font-size:16px;background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
 .go{background:var(--green);color:#fff;border:0;border-radius:10px;padding:14px;font-weight:600;font-size:16px}
+.chip{display:inline-flex;align-items:center;gap:5px;font-family:var(--f-body);font-size:12px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--muted);margin-left:6px;vertical-align:middle}
+.chip .dot{width:8px;height:8px}
+.codebig{font-family:var(--f-display);font-weight:700;font-size:56px;letter-spacing:.12em;text-align:center;font-variant-numeric:tabular-nums;line-height:1}
+.qr{display:flex;justify-content:center;padding:12px;background:#fff;border-radius:10px;align-self:center}
+.qr img,.qr canvas{display:block}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.row2{display:flex;gap:8px;flex-wrap:wrap}
+.row2>*{flex:1;min-width:0}
+.codein{font:inherit;font-family:var(--f-display);font-size:28px;letter-spacing:.15em;text-align:center;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px;width:100%}
+.linkline{font-size:13px;word-break:break-all;user-select:all;background:var(--key);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+#live{display:block;max-width:100%;max-height:55vh;margin:0 auto;background:#000}
 .hint{color:var(--muted);font-size:13px;margin:0;line-height:1.45}
 .winbox{background:var(--green-soft);border:1px solid var(--green);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px}
 .winbox h3{margin:0;font-family:var(--f-display);font-size:28px;text-transform:uppercase}
@@ -112,8 +123,9 @@ button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
 <body>
 <div class="app" id="app">
   <div class="top">
-    <div class="brand">Oche Zähler <small id="info">501 · Double Out</small></div>
+    <div class="brand">Oche Zähler <small id="info">501 · Double Out</small><span class="chip" id="netChip" hidden><span class="dot" id="netDot"></span><span id="netTxt"></span></span></div>
     <div style="display:flex;gap:6px">
+      <button class="ghost" id="netBtn">Koppeln</button>
       <button class="ghost" id="statsBtn">Statistik</button>
       <button class="ghost" id="newBtn">Neues Spiel</button>
     </div>
@@ -150,6 +162,15 @@ button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
       <div class="pad" style="margin:0">
         <div class="totalin" id="tIn">0</div>
         <div class="num" id="num"></div>
+      </div>
+    </div>
+    <div id="livePad" hidden>
+      <div class="pad" style="margin:0">
+        <div class="camwrap"><video id="live" playsinline muted autoplay></video>
+          <div class="camoff" id="liveOff"><span>Noch kein Kamerabild. Auf dem Kamera-Handy „Kamera“ öffnen und „Kamera starten“ tippen.</span></div>
+        </div>
+        <p class="hint">Live-Bild vom Kamera-Handy. Erkannte Würfe erscheinen oben automatisch. Korrigieren kannst du über „Pro Dart“ oder „Zurück“.</p>
+        <button class="k small" id="liveUndo">Letzten Wurf zurücknehmen</button>
       </div>
     </div>
     <div id="camPad" hidden>
@@ -197,6 +218,42 @@ button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
   </div>
 </div>
 
+<div class="sheet" id="netSheet" hidden>
+  <div class="in">
+    <h2>Zweites Handy koppeln</h2>
+    <p class="hint">Ein Handy ist das Kamera-Handy: Es filmt die Scheibe und führt das Spiel. Das zweite Handy sieht live Punktestand und Kamerabild und kann selbst Würfe eintragen oder korrigieren. Beide Handys brauchen Internet, am besten im selben WLAN.</p>
+    <div id="netIdle" class="fld" style="gap:12px">
+      <div class="box">
+        <b>Dieses Handy filmt die Scheibe</b>
+        <button class="go" id="hostBtn">Als Kamera-Handy starten</button>
+      </div>
+      <div class="box">
+        <b>Dieses Handy schaut zu</b>
+        <input class="codein" id="joinCode" inputmode="numeric" maxlength="4" placeholder="Code" aria-label="Code vom Kamera-Handy">
+        <button class="go" id="joinBtn">Verbinden</button>
+        <p class="hint">Oder einfach den QR-Code auf dem Kamera-Handy mit der Handykamera scannen.</p>
+      </div>
+    </div>
+    <div id="netHost" class="box" hidden>
+      <b>Code für das zweite Handy</b>
+      <div class="codebig" id="hostCode">····</div>
+      <div class="qr" id="qr"></div>
+      <div class="linkline" id="hostLink"></div>
+      <div class="row2"><button class="ghost" id="copyLink">Link kopieren</button></div>
+      <p class="hint" id="hostState">Warte auf das zweite Handy …</p>
+    </div>
+    <div id="netGuest" class="box" hidden>
+      <b id="guestTitle">Verbinde …</b>
+      <p class="hint" id="guestState"></p>
+    </div>
+    <p class="hint" id="netErr" style="color:var(--red)"></p>
+    <div class="row2">
+      <button class="ghost" id="netStop" hidden>Kopplung beenden</button>
+      <button class="go" id="netClose">Zurück zum Spiel</button>
+    </div>
+  </div>
+</div>
+
 <div class="sheet" id="statSheet" hidden>
   <div class="in">
     <h2>Statistik</h2>
@@ -206,6 +263,8 @@ button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>
 /* =====================================================================
    TEIL A: Reine Rechenfunktionen (Checkout, Scheibe, Bilderkennung)
@@ -350,8 +409,11 @@ const checkout=Oche.checkout;
 
 let cfg={start:501,dbl:true,legs:1,names:["Spieler 1","Spieler 2"]};
 let g=null, undo=[], mod=1, mode="dart", tIn="", pendingCo=null, toast=null;
+let role="solo"; // solo | host | guest
+const net={send(){},broadcast(){}};
 
 function newGame(c){
+  if(role==="guest"){net.send({a:"new",cfg:c});return}
   cfg=c;
   g={players:c.names.map(n=>({name:n,legs:0,pts:0,darts:0,hi:0,n100:0,n140:0,n180:0,last:null,bestLeg:null,legDarts:0})),
      legStarter:0,turn:0,rem:c.names.map(()=>c.start),visit:[],visitStart:c.start,winner:null,legNo:1};
@@ -359,7 +421,7 @@ function newGame(c){
   save();render();
 }
 function snap(){undo.push(JSON.stringify({g,toast}));if(undo.length>300)undo.shift()}
-function save(){try{localStorage.setItem(KEY,JSON.stringify({cfg,g,undo:undo.slice(-60),mode:mode==="cam"?"dart":mode}))}catch(e){}}
+function save(){if(role==="host")net.broadcast();if(role==="guest")return;try{localStorage.setItem(KEY,JSON.stringify({cfg,g,undo:undo.slice(-60),mode:mode==="cam"?"dart":mode}))}catch(e){}}
 function load(){try{const s=JSON.parse(localStorage.getItem(KEY)||"null");if(s&&s.g){cfg=s.cfg;g=s.g;undo=s.undo||[];mode=s.mode||"dart";return true}}catch(e){}return false}
 function cur(){return g.players[g.turn]}
 function visitSum(){return g.visit.reduce((a,d)=>a+d.v,0)}
@@ -383,6 +445,7 @@ function endVisit(bust,checkedOut){
 }
 function throwDart(v,label,isDbl){
   if(g.winner!==null||pendingCo!==null)return false;
+  if(role==="guest"){net.send({a:"dart",v,l:label,d:!!isDbl});setMod(1);return true}
   snap(); if(g.visit.length===0)toast=null;
   const r=g.rem[g.turn]-v;
   g.visit.push({v,l:label});
@@ -394,27 +457,39 @@ function throwDart(v,label,isDbl){
 const IMPOSSIBLE=[163,166,169,172,173,175,176,178,179];
 function submitTotal(){
   if(g.winner!==null)return;
-  const v=parseInt(tIn||"0",10);
-  if(v>180||IMPOSSIBLE.includes(v)){toast={t:"bust",m:v+" ist mit drei Darts nicht möglich."};tIn="";render();return}
+  const v=parseInt(tIn||"0",10);tIn="";
+  if(v>180||IMPOSSIBLE.includes(v)){toast={t:"bust",m:v+" ist mit drei Darts nicht möglich."};render();return}
   const rem=g.rem[g.turn],r=rem-v;
-  snap();toast=null;
   if(r===0&&v>0){
-    if(cfg.dbl&&!checkout(rem,3,true)){undo.pop();toast={t:"bust",m:rem+" ist mit Double Out nicht checkbar."};tIn="";render();return}
-    pendingCo=v;tIn="";render();return;
+    if(cfg.dbl&&!checkout(rem,3,true)){toast={t:"bust",m:rem+" ist mit Double Out nicht checkbar."};render();return}
+    pendingCo=v;render();return;
   }
-  const bust=r<0||(cfg.dbl&&r===1)||r===0;
+  doTotal(v);
+}
+function doTotal(v){
+  if(role==="guest"){net.send({a:"total",v});render();return}
+  if(g.winner!==null)return;
+  snap();toast=null;
+  const r=g.rem[g.turn]-v,bust=r<0||(cfg.dbl&&r===1)||r===0;
   if(!bust)g.rem[g.turn]=r;
   g.visit=[{v,l:String(v)},{v:0,l:""},{v:0,l:""}];
-  endVisit(bust,false);tIn="";save();render();
+  endVisit(bust,false);save();render();
 }
-function confirmCo(n){
-  const v=pendingCo;pendingCo=null;
+function confirmCo(n){const v=pendingCo;pendingCo=null;applyCo(v,n)}
+function applyCo(v,n){
+  if(role==="guest"){net.send({a:"co",v,n});render();return}
+  if(g.winner!==null||g.rem[g.turn]!==v)return;
+  snap();toast=null;
   g.visit=Array.from({length:n},(_,i)=>({v:i===0?v:0,l:""}));
   g.rem[g.turn]=0;endVisit(false,true);save();render();
 }
 function doUndo(){
-  if(pendingCo!==null){pendingCo=null;undo.pop();render();return}
+  if(pendingCo!==null){pendingCo=null;render();return}
   if(mode==="total"&&tIn){tIn=tIn.slice(0,-1);render();return}
+  undoState();
+}
+function undoState(){
+  if(role==="guest"){net.send({a:"undo"});return}
   const s=undo.pop();if(!s)return;
   const o=JSON.parse(s);g=o.g;toast=o.toast;save();render();
   if(mode==="cam"&&cam.markers.length)cam.markers.pop();
@@ -455,7 +530,8 @@ function render(){
   $("mDart").setAttribute("aria-pressed",mode==="dart");
   $("mTotal").setAttribute("aria-pressed",mode==="total");
   $("mCam").setAttribute("aria-pressed",mode==="cam");
-  $("dartPad").hidden=mode!=="dart";$("totalPad").hidden=mode!=="total";$("camPad").hidden=mode!=="cam";
+  $("dartPad").hidden=mode!=="dart";$("totalPad").hidden=mode!=="total";$("camPad").hidden=mode!=="cam"||role==="guest";$("livePad").hidden=mode!=="cam"||role!=="guest";
+  $("mCam").textContent=role==="guest"?"Live-Bild":"Kamera";
   $("tIn").textContent=tIn||"0";
   renderNum();
 }
@@ -477,6 +553,7 @@ $("kBull").onclick=()=>throwDart(50,"Bull",true);
 $("kMiss").onclick=()=>throwDart(0,"0",false);
 $("kUndo").onclick=doUndo;
 function setMode(m){
+  if(m==="cam"&&role==="guest"){mode=m;render();return}
   if(g.visit.length&&m==="total"){toast={t:"bust",m:"Erst die angefangene Aufnahme fertig werfen."};render();return}
   mode=m;save();render();if(m!=="cam")stopCam();else requestAnimationFrame(sizeView);
 }
@@ -564,9 +641,11 @@ async function startCam(){
   $("camOff").hidden=true;
   if(!cam.cal)beginCal();else status("Kamera läuft – Scheibe leer lassen, gleich bereit …","move");
   cam.timer=setInterval(tick,120);
+  setTimeout(()=>netCallAll(),300);
   const loop=()=>{draw();cam.raf=requestAnimationFrame(loop)};loop();
 }
 function stopCam(){
+  netHangup();
   clearInterval(cam.timer);cancelAnimationFrame(cam.raf);cam.timer=null;
   if(cam.stream){cam.stream.getTracks().forEach(t=>t.stop());cam.stream=null}
   $("camOff").hidden=false;status("Kamera aus");endCalUI();
@@ -685,7 +764,125 @@ $("sens").oninput=e=>{cam.thr=+e.target.value;$("sensV").textContent=cam.thr;try
 $("showDiff").onchange=e=>cam.showDiff=e.target.checked;
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden"&&cam.stream)stopCam()});
 
+
+/* =====================================================================
+   TEIL D: Zwei Handys koppeln (PeerJS, direkt von Handy zu Handy)
+   ===================================================================== */
+const HOSTKEY="oche-host-code", PREFIX="oche-zaehler-";
+let peer=null, conns=[], hostConn=null, calls=[], joinCode=null, retryT=null, liveCall=null;
+const BASE=location.origin+location.pathname;
+function chip(txt,kind){$("netChip").hidden=!txt;$("netTxt").textContent=txt||"";$("netDot").className="dot"+(kind?" "+kind:"")}
+function netErr(t){$("netErr").textContent=t||""}
+function showNet(which){$("netIdle").hidden=which!=="idle";$("netHost").hidden=which!=="host";$("netGuest").hidden=which!=="guest";$("netStop").hidden=which==="idle"}
+function stateMsg(){return{t:"state",cfg,g,toast}}
+net.broadcast=function(){const m=stateMsg();conns.forEach(c=>{try{if(c.open)c.send(m)}catch(e){}})};
+net.send=function(m){m.t="act";if(hostConn&&hostConn.open){try{hostConn.send(m)}catch(e){}}else{toast={t:"bust",m:"Keine Verbindung zum Kamera-Handy."};render()}};
+function hostStatus(){
+  const n=conns.filter(c=>c.open).length;
+  $("hostState").textContent=n?n+(n===1?" Handy":" Handys")+" verbunden.":"Warte auf das zweite Handy …";
+  chip(n?"Gekoppelt":"Kamera-Handy",n?"ready":"move");
+}
+function startHost(code){
+  if(typeof Peer==="undefined"){netErr("Die Kopplung konnte nicht geladen werden. Prüfe die Internetverbindung und lade die Seite neu.");return}
+  stopNet(true);
+  code=code||String(Math.floor(1000+Math.random()*9000));
+  role="host";joinCode=code;try{localStorage.setItem(HOSTKEY,code)}catch(e){}
+  showNet("host");netErr("");chip("Startet …","move");
+  $("hostCode").textContent=code;
+  const link=BASE+"?join="+code;$("hostLink").textContent=link;
+  $("qr").innerHTML="";try{new QRCode($("qr"),{text:link,width:180,height:180,correctLevel:QRCode.CorrectLevel.M})}catch(e){$("qr").hidden=true}
+  peer=new Peer(PREFIX+code);
+  peer.on("open",()=>{hostStatus()});
+  peer.on("connection",c=>{
+    c.on("open",()=>{conns.push(c);hostStatus();try{c.send(stateMsg())}catch(e){}if(cam.stream)callOne(c.peer)});
+    c.on("data",d=>hostAct(d));
+    c.on("close",()=>{conns=conns.filter(x=>x!==c);hostStatus()});
+    c.on("error",()=>{});
+  });
+  peer.on("disconnected",()=>{if(role==="host"&&peer&&!peer.destroyed)setTimeout(()=>{try{peer.reconnect()}catch(e){}},1500)});
+  peer.on("error",e=>{
+    if(e.type==="unavailable-id"){startHost(null);return}
+    if(e.type==="network"||e.type==="server-error"||e.type==="socket-error"){chip("Offline","hit");netErr("Keine Verbindung zum Kopplungs-Server. Prüfe das Internet.")}
+  });
+  render();
+}
+function hostAct(d){
+  if(!d||d.t!=="act")return;
+  const v=Math.round(+d.v||0);
+  if(d.a==="dart"){if(v<0||v>60)return;throwDart(v,String(d.l||v).slice(0,5),!!d.d)}
+  else if(d.a==="undo")undoState();
+  else if(d.a==="total"){if(v<0||v>180)return;doTotal(v)}
+  else if(d.a==="co"){const n=Math.round(+d.n);if(n<1||n>3)return;applyCo(v,n)}
+  else if(d.a==="new"&&d.cfg){const c=d.cfg;
+    if(![301,501,701].includes(c.start)||!Array.isArray(c.names)||c.names.length<1||c.names.length>4)return;
+    cam.markers=[];newGame({start:c.start,dbl:!!c.dbl,legs:Math.min(9,Math.max(1,+c.legs||1)),names:c.names.map((x,i)=>String(x||"").slice(0,24)||"Spieler "+(i+1))})}
+}
+function startGuest(code){
+  if(typeof Peer==="undefined"){netErr("Die Kopplung konnte nicht geladen werden. Prüfe die Internetverbindung und lade die Seite neu.");return}
+  if(!/^\d{4}$/.test(code)){netErr("Der Code hat 4 Ziffern.");return}
+  stopNet(true);
+  joinCode=code;showNet("guest");netErr("");
+  $("guestTitle").textContent="Verbinde mit Code "+code+" …";$("guestState").textContent="";chip("Verbinde …","move");
+  peer=new Peer();
+  peer.on("open",()=>connectHost());
+  peer.on("call",call=>{
+    if(liveCall)try{liveCall.close()}catch(e){}
+    liveCall=call;call.answer();
+    call.on("stream",st=>{const v=$("live");v.srcObject=st;v.play().catch(()=>{});$("liveOff").hidden=true});
+    call.on("close",()=>{$("liveOff").hidden=false;$("live").srcObject=null});
+  });
+  peer.on("disconnected",()=>{if(joinCode&&peer&&!peer.destroyed)setTimeout(()=>{try{peer.reconnect()}catch(e){}},1500)});
+  peer.on("error",e=>{
+    if(e.type==="peer-unavailable"){$("guestState").textContent="Kein Kamera-Handy mit diesem Code gefunden. Ist es dort als Kamera-Handy gestartet? Ich versuche es weiter …";chip("Suche …","move");scheduleRetry()}
+    else if(e.type==="network"||e.type==="server-error"||e.type==="socket-error"){chip("Offline","hit");$("guestState").textContent="Keine Verbindung zum Kopplungs-Server. Prüfe das Internet.";scheduleRetry()}
+  });
+}
+function scheduleRetry(){clearTimeout(retryT);retryT=setTimeout(()=>{if(joinCode&&peer&&!peer.destroyed&&!(hostConn&&hostConn.open))connectHost()},4000)}
+function connectHost(){
+  if(!peer||peer.destroyed)return;
+  if(peer.disconnected){try{peer.reconnect()}catch(e){}scheduleRetry();return}
+  const c=peer.connect(PREFIX+joinCode,{reliable:true});hostConn=c;
+  c.on("open",()=>{role="guest";pendingCo=null;tIn="";$("guestTitle").textContent="Gekoppelt mit Code "+joinCode;$("guestState").textContent="Du siehst jetzt das Spiel vom Kamera-Handy.";chip("Gekoppelt","ready");setTimeout(()=>{if(!$("netSheet").hidden)$("netSheet").hidden=true},900)});
+  c.on("data",d=>{if(d&&d.t==="state"&&d.g&&d.cfg){g=d.g;cfg=d.cfg;toast=d.toast||null;render()}});
+  c.on("close",()=>{if(hostConn===c){hostConn=null;if(joinCode){chip("Getrennt","hit");$("guestTitle").textContent="Verbindung verloren";$("guestState").textContent="Ich verbinde automatisch neu …";scheduleRetry()}}});
+  c.on("error",()=>{});
+}
+function callOne(id){
+  if(!peer||!cam.stream)return;
+  let st=null;try{st=view.captureStream?view.captureStream(15):null}catch(e){}
+  if(!st||!st.getVideoTracks().length)st=cam.stream;
+  try{const call=peer.call(id,st);if(call)calls.push(call)}catch(e){}
+}
+function netCallAll(){if(role!=="host")return;netHangup();conns.filter(c=>c.open).forEach(c=>callOne(c.peer))}
+function netHangup(){calls.forEach(c=>{try{c.close()}catch(e){}});calls=[]}
+function stopNet(keep){
+  clearTimeout(retryT);netHangup();
+  if(liveCall)try{liveCall.close()}catch(e){}liveCall=null;
+  conns.forEach(c=>{try{c.close()}catch(e){}});conns=[];
+  if(hostConn)try{hostConn.close()}catch(e){}hostConn=null;
+  if(peer)try{peer.destroy()}catch(e){}peer=null;
+  const wasGuest=role==="guest";role="solo";
+  if(!keep){joinCode=null;try{localStorage.removeItem(HOSTKEY)}catch(e){}showNet("idle");chip("");
+    if(wasGuest){if(!load())newGame({start:501,dbl:true,legs:1,names:["Spieler 1","Spieler 2"]});}
+    render()}
+}
+$("netBtn").onclick=()=>{netErr("");if(role==="solo"&&!joinCode)showNet("idle");$("netSheet").hidden=false};
+$("netClose").onclick=()=>$("netSheet").hidden=true;
+$("hostBtn").onclick=()=>startHost(null);
+$("joinBtn").onclick=()=>startGuest($("joinCode").value.trim());
+$("joinCode").addEventListener("keydown",e=>{if(e.key==="Enter")startGuest($("joinCode").value.trim())});
+$("netStop").onclick=()=>stopNet(false);
+$("liveUndo").onclick=()=>undoState();
+$("copyLink").onclick=()=>{const t=$("hostLink").textContent;
+  (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>{$("copyLink").textContent="Kopiert"},()=>{const r=document.createRange();r.selectNodeContents($("hostLink"));const sel=getSelection();sel.removeAllRanges();sel.addRange(r)})};
+
 if(!load())newGame(cfg);else render();
+(function(){
+  const q=new URLSearchParams(location.search).get("join");
+  if(q&&/^\d{4}$/.test(q)){$("joinCode").value=q;history.replaceState(null,"",BASE);$("netSheet").hidden=false;startGuest(q);return}
+  let h=null;try{h=localStorage.getItem(HOSTKEY)}catch(e){}
+  if(h&&/^\d{4}$/.test(h))startHost(h);
+})();
 })();
 </script>
 </body>
