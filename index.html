@@ -234,7 +234,7 @@ button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
           <summary>Einstellungen Erkennung</summary>
           <div class="row"><span>Empfindlichkeit</span><input type="range" id="sens" min="10" max="60" value="28"><span id="sensV">28</span></div>
           <div class="row"><label><input type="checkbox" id="showDiff"> Erkannte Veränderung rot anzeigen</label></div>
-          <p class="hint">Zoomen: zwei Finger im Bild auseinanderziehen oder den Regler schieben. Ist gezoomt, verschiebst du den Ausschnitt mit einem Finger. Liegt ein Dart falsch, tippe auf „Zurück“ und dann im Bild genau auf die Dartspitze. Fällt ein Dart von der Scheibe: „Daneben (0)“.</p>
+          <p class="hint">Zoomen: zwei Finger im Bild auseinanderziehen oder den Regler schieben. Ist gezoomt, verschiebst du den Ausschnitt mit einem Finger. Liegt ein Dart falsch, tippe auf „Zurück“ und dann im Bild genau auf die Dartspitze. Fällt ein Dart von der Scheibe: „Daneben (0)“. Nach jeder Aufnahme wartet die App, bis die Darts gezogen sind. Klappt das nicht, „Scheibe leer“ drücken. Gutes, gleichmäßiges Licht (z. B. ein Ringlicht) ohne harte Schatten verbessert die Erkennung deutlich.</p>
         </details>
       </div>
     </div>
@@ -430,6 +430,106 @@ const Oche=(function(){
     }
     return{kind:darts.length?"darts":"none",darts,mask:m,changed:c};
   }
+  /* --- Neue Dart-Erkennung ---
+     Aus der Kalibrierung (Homographie) und einer geschätzten Brennweite wird die Lage der Scheibe im Raum
+     berechnet. Daraus folgt, in welche Richtung ein Dart im Bild aus der Scheibe ragt. Die Spitze ist das
+     Ende des Dart-Umrisses, das entgegen dieser Richtung liegt. */
+  function pose(Hpix,f,cx,cy){ // Hpix: mm -> Pixel
+    const Ki=[[1/f,0,-cx/f],[0,1/f,-cy/f],[0,0,1]];
+    const Hm=[[Hpix[0],Hpix[1],Hpix[2]],[Hpix[3],Hpix[4],Hpix[5]],[Hpix[6],Hpix[7],Hpix[8]]];
+    const M=Ki.map(r=>[0,1,2].map(j=>r[0]*Hm[0][j]+r[1]*Hm[1][j]+r[2]*Hm[2][j]));
+    const col=j=>[M[0][j],M[1][j],M[2][j]];
+    let m1=col(0),m2=col(1),m3=col(2);
+    const lam=(Math.hypot(...m1)+Math.hypot(...m2))/2;if(!(lam>0))return null;
+    let sg=m3[2]<0?-1:1;
+    const r1=m1.map(v=>v*sg/lam),r2=m2.map(v=>v*sg/lam),t=m3.map(v=>v*sg/lam);
+    const r3=[r1[1]*r2[2]-r1[2]*r2[1],r1[2]*r2[0]-r1[0]*r2[2],r1[0]*r2[1]-r1[1]*r2[0]];
+    const proj=(X,Y,Z)=>{const p=[0,1,2].map(i=>r1[i]*X+r2[i]*Y+r3[i]*Z+t[i]);return[f*p[0]/p[2]+cx,f*p[1]/p[2]+cy,p[2]]};
+    // r3 soll aus der Scheibe heraus zur Kamera zeigen (z wird kleiner)
+    if(proj(0,0,100)[2]>proj(0,0,0)[2]){for(let i=0;i<3;i++)r3[i]=-r3[i]}
+    return{proj};
+  }
+  // Brennweite aus der Kalibrierung schätzen (Scheibe ist rund, Achsen stehen senkrecht)
+  function estF(Hpix,cx,cy,fb){
+    const h=[[Hpix[0]-cx*Hpix[6],Hpix[1]-cx*Hpix[7]],[Hpix[3]-cy*Hpix[6],Hpix[4]-cy*Hpix[7]],[Hpix[6],Hpix[7]]];
+    const A=[h[0][0]*h[0][1]+h[1][0]*h[1][1],h[0][0]**2+h[1][0]**2-h[0][1]**2-h[1][1]**2],D=[h[2][0]*h[2][1],h[2][0]**2-h[2][1]**2];
+    // Skalierung angleichen
+    const sA=Math.max(Math.abs(A[0]),Math.abs(A[1]),1e-12);
+    let num=0,den=0;for(let i=0;i<2;i++){num+=A[i]/sA*D[i];den+=(A[i]/sA)**2}
+    const u=-num/den/sA; // = 1/f^2
+    if(!(u>0))return{f:fb,est:false};
+    const f=1/Math.sqrt(u);
+    return(f>fb*0.25&&f<fb*12)?{f,est:true}:{f:fb,est:false};
+  }
+  // Richtung (Bild, Einheitsvektor), in die ein Dart an Scheibenpunkt (X,Y) aus der Scheibe ragt
+  function outDir(P,X,Y){const a=P.proj(X,Y,0),b=P.proj(X,Y,60);const dx=b[0]-a[0],dy=b[1]-a[1],n=Math.hypot(dx,dy);return n<1e-6?null:[dx/n,dy/n,n]}
+
+  function detectDart(cur,ref,empty,W,H,thr,o){
+    // o: {toMMpx(x,y)->[mm], P (Lage der Scheibe, Pixel), known (Uint8Array|null)}
+    const N=W*H,{m,c}=diffMask(cur,ref,thr);
+    if(c>N*0.08)return{kind:"big",mask:m};
+    const dm=dilate(m,W,H),kn=o.known;
+    // bekannte Darts nur schwach werten (Wackeln), aber nicht ausblenden: neue Darts dürfen davor stecken
+    const soft=o.soft!==false;
+    if(kn&&!soft)for(let i=0;i<N;i++)if(kn[i])dm[i]=0;
+    if(!o.P){ // ohne Lage-Info: alte Regel (schmaleres Ende)
+      const comps=components(dm,W,H,Math.max(10,Math.round(N*0.00012)));if(!comps.length)return{kind:"none",mask:m};
+      const f=findTip(comps[0],W,H,null);return{kind:"darts",darts:[{x:f.x,y:f.y}],mask:m,px:comps[0]}}
+    // veränderte Pixel (ohne bekannte Darts)
+    const all=[];let nNew=0;for(let i=0;i<N;i++)if(dm[i]&&m[i]){all.push(i);if(!kn||!kn[i])nNew++}
+    if(all.length<12||nNew<8)return{kind:"none",mask:m};
+    const cs=Math.max(1,Math.ceil(all.length/2500)),CH=[];for(let i=0;i<all.length;i+=cs)CH.push(all[i]);
+    const hit=(x,y)=>{const xi=x|0,yi=y|0;return xi>=0&&yi>=0&&xi<W&&yi<H&&dm[yi*W+xi]===1};
+    // Kandidaten für die Spitze
+    const ks=Math.max(1,Math.ceil(all.length/450)),cand=[];
+    for(let i=0;i<all.length;i+=ks){const idx=all[i],x=idx%W+0.5,y=((idx/W)|0)+0.5,q=o.toMMpx(x,y);if(Math.hypot(q[0],q[1])<228)cand.push([x,y,q[0],q[1]])}
+    if(!cand.length)return{kind:"none",mask:m};
+    const TILTS=[[0,0],[0,0.2],[0,-0.2],[0.2,0],[-0.2,0],[0,0.4],[0,-0.4],[0.4,0],[-0.4,0],[0.25,0.25],[-0.25,0.25],[0.25,-0.25],[-0.25,-0.25]];
+    const LEN=125,FL=88; // Dart-Länge, ab hier Flight (mm)
+    let res=[];
+    for(const cd of cand){
+      let bc=null;
+      for(const tl of TILTS){
+        const nz=Math.sqrt(1+tl[0]*tl[0]+tl[1]*tl[1]),pt=t=>o.P.proj(cd[2]+tl[0]*t/nz,cd[3]+tl[1]*t/nz,t/nz);
+        let back=0;for(const t of [-5,-10,-16]){const p=pt(t);if(hit(p[0],p[1]))back++}
+        if(back>1)continue;
+        const p0=pt(0),p1=pt(LEN),ux=p1[0]-p0[0],uy=p1[1]-p0[1],L=Math.hypot(ux,uy);if(L<4)continue;
+        const nx=ux/L,ny=uy/L,sc=L/LEN; // Pixel pro mm (entlang)
+        const wB=4*sc+1.5,wF=18*sc+1.5;let ex=0;
+        for(const idx of CH){const dx=idx%W+0.5-p0[0],dy=((idx/W)|0)+0.5-p0[1],a=dx*nx+dy*ny;
+          if(a<-2||a>L+3)continue;const d=Math.abs(-dx*ny+dy*nx);if(d<=(a<L*FL/LEN?wB:wF))ex+=(kn&&kn[idx])?0.3:1}
+        const s2=ex-back*ex*0.3;
+        if(!bc||s2>bc.s)bc={s:s2,ex,cd,tl,back,p0,nx,ny,L,wB,wF};
+      }
+      if(bc)res.push(bc);
+    }
+    if(!res.length)return{kind:"none",mask:m};
+    res.sort((p,q)=>q.s-p.s);
+    const best=res[0];
+    // erwartete Fläche eines ganzen Darts (in Stichproben-Pixeln) -> kleine Wackel-Flecken aussortieren
+    const expA=(best.L*FL/LEN*2*best.wB+best.L*(LEN-FL)/LEN*2*best.wF*0.55)/cs;
+    if(best.ex<Math.max(10/cs,expA*0.18))return{kind:"none",mask:m,weak:true};
+    // Spitze: unter den fast gleich guten Kandidaten auf derselben Linie der, der am weitesten zur Scheibe hin liegt
+    let tip=best.cd,amin=0;
+    for(const r of res){if(r.s<best.s*0.94)break;
+      const dx=r.cd[0]-best.p0[0],dy=r.cd[1]-best.p0[1],a=dx*best.nx+dy*best.ny,d=Math.abs(-dx*best.ny+dy*best.nx);
+      if(d<=best.wB*0.8&&a<amin&&a>-best.L*0.25){amin=a;tip=r.cd}}
+    // Feinschliff: entlang der Linie zur Scheibe hin, solange noch veränderte Pixel kommen
+    let tx=tip[0],ty=tip[1];
+    for(let k=1;k<=(o.walk==null?4:o.walk);k++){const x=tip[0]-best.nx*k*0.7,y=tip[1]-best.ny*k*0.7;if(hit(x,y)){tx=x;ty=y}else break}
+    const sh=(o.shift||0)*best.L/LEN;tip=[tx-best.nx*sh,ty-best.ny*sh];
+    // erklärte Pixel -> Maske "bekannte Darts"
+    const px=[];
+    for(let i=0;i<N;i++){if(!m[i])continue;const dx=i%W+0.5-best.p0[0],dy=((i/W)|0)+0.5-best.p0[1],a=dx*best.nx+dy*best.ny;
+      if(a<-4||a>best.L+6)continue;const d=Math.abs(-dx*best.ny+dy*best.nx);if(d<=(a<best.L*FL/LEN?best.wB:best.wF)+3)px.push(i)}
+    return{kind:"darts",darts:[{x:tip[0]/W,y:tip[1]/H}],mask:m,px,sc:best.ex,changed:c};
+  }
+  // Sind die Darts gezogen? Im Bereich der bekannten Darts sieht die Scheibe wieder aus wie leer.
+  function pulled(cur,empty,known,thr){
+    let n=0,ch=0;for(let i=0;i<known.length;i++)if(known[i]){n++;if(Math.abs(cur[i]-empty[i])>thr)ch++}
+    return n===0?true:ch<n*0.12;
+  }
+
   /* --- Automatische Kalibrierung: Scheibe an den roten/grünen Ringen erkennen --- */
   // 0 = nichts, 1 = rot, 2 = grün
   function classify(rgba,N,loose){
@@ -538,7 +638,7 @@ const Oche=(function(){
     return best&&best.q>=0.3?best:null;
   }
   const SECT_ORDER=SECT;
-  return{checkout,scoreMM,homog,apply,toGray,diffMask,analyze,findTip,components,dilate,autoCal,classify,SECT_ORDER,CAL_MM,CAL_NAMES,R};
+  return{checkout,scoreMM,homog,apply,toGray,diffMask,analyze,findTip,components,dilate,pose,estF,outDir,detectDart,pulled,autoCal,classify,SECT_ORDER,CAL_MM,CAL_NAMES,R};
 })();
 if(typeof module!=="undefined")module.exports=Oche;
 
@@ -751,7 +851,8 @@ const cam={stream:null,video:document.createElement("video"),proc:document.creat
   W:480,H:270,timer:null,raf:0,ref:null,empty:null,prev:null,stable:0,evaluated:false,
   markers:[],thr:28,showDiff:false,mask:null,cal:null,H2mm:null,Hmm2img:null,manual:false,
   calMode:false,auto:true,rotK:0,autoHits:0,lastAuto:0,checkSaved:false,
-  drag:-1,dragOff:[0,0],down:null,pinch:null,z:1,px:0.5,py:0.5,msg:"Kamera aus",kind:"",starting:false};
+  drag:-1,dragOff:[0,0],down:null,pinch:null,z:1,px:0.5,py:0.5,msg:"Kamera aus",kind:"",starting:false,
+  known:null,waitPull:false,bigCount:0,lastKey:null,P:null,Pkey:""};
 cam.video.playsInline=true;cam.video.muted=true;cam.video.setAttribute("playsinline","");
 const view=$("view"),vctx=view.getContext("2d");
 const pctx=cam.proc.getContext("2d",{willReadFrequently:true});
@@ -788,7 +889,7 @@ function setZoom(z,px,py){
   const f=p=>[(o.x+p[0]*o.w-n.x)/n.w,(o.y+p[1]*o.w-n.y)/n.w];
   if(cam.cal&&cam.cal.length){const c=cam.cal.map(f);if(c.length===4)setCal(c);else cam.cal=c}
   cam.markers.forEach(m=>{const q=f([m.x,m.y]);m.x=q[0];m.y=q[1]});
-  cam.ref=null;cam.empty=null;cam.prev=null;cam.stable=0;cam.evaluated=false;cam.mask=null;cam.autoHits=0;
+  cam.ref=null;cam.empty=null;cam.prev=null;cam.stable=0;cam.evaluated=false;cam.mask=null;cam.autoHits=0;cam.known=null;cam.waitPull=false;
   try{localStorage.setItem(ZKEY,JSON.stringify({z:cam.z,px:cam.px,py:cam.py}))}catch(e){}
   if(cam.cal&&cam.cal.length===4&&!cam.calMode)saveCal();
   zoomUI();
@@ -834,6 +935,18 @@ function sizeView(){}
 /* Bildverarbeitung, ca. 8x pro Sekunde */
 function srcRect(){const c=crop(),vw=cam.video.videoWidth,vh=cam.video.videoHeight;return[c.x*vw,c.y*vh,c.w*vw,c.w*vh]}
 function grab(){const[sx,sy,sw,sh]=srcRect();pctx.drawImage(cam.video,sx,sy,sw,sh,0,0,cam.W,cam.H);return Oche.toGray(pctx.getImageData(0,0,cam.W,cam.H).data,cam.W*cam.H)}
+function gameKey(){return g.turn+"/"+g.legNo+"/"+g.winner}
+function curName(){return g.winner===null?g.players[g.turn].name:""}
+function resetRound(gray){cam.known=new Uint8Array(cam.W*cam.H);cam.markers=[];cam.waitPull=false;cam.bigCount=0;cam.lastKey=gameKey();if(gray){cam.ref=gray;cam.empty=gray}}
+function boardPose(){ // Lage der Scheibe im Raum (für die Dart-Richtung), wird bei neuer Kalibrierung/Zoom neu berechnet
+  if(!cam.cal||cam.cal.length!==4)return null;
+  const key=JSON.stringify(cam.cal)+"|"+cam.z+"|"+cam.px+"|"+cam.py+"|"+cam.W;
+  if(key===cam.Pkey)return cam.P;
+  const Hpix=Oche.homog(Oche.CAL_MM,cam.cal.map(p=>[p[0]*cam.W,p[1]*cam.H]));
+  const c=crop(),cx=(0.5-c.x)/c.w*cam.W,cy=(0.5-c.y)/c.w*cam.H,fb=0.8*Math.max(cam.W,cam.H)*cam.z;
+  const fe=Hpix?Oche.estF(Hpix,cx,cy,fb):{f:fb};
+  cam.P=Hpix?Oche.pose(Hpix,fe.f,cx,cy):null;cam.Pkey=key;return cam.P;
+}
 function tick(){
   if(!cam.stream||cam.video.readyState<2)return;
   const gray=grab(),N=cam.W*cam.H;
@@ -844,35 +957,55 @@ function tick(){
     const now=Date.now();
     if(cam.auto&&cam.drag<0&&!cam.pinch&&now-cam.lastAuto>550){cam.lastAuto=now;runAuto()}
     return}
-  if(mot>0.0015){cam.stable=0;cam.evaluated=false;if(cam.ref)status("Bewegung …","move");return}
+  if(mot>0.0015){cam.stable=0;cam.evaluated=false;if(cam.ref&&!cam.waitPull)status("Bewegung …","move");return}
   cam.stable++;
   if(cam.stable<4||cam.evaluated)return;
   cam.evaluated=true;
   if(!cam.H2mm){status("Bitte zuerst kalibrieren.","");return}
-  if(!cam.ref){cam.ref=gray;cam.empty=gray;cam.markers=[];status("Bereit – wirf!","ready");return}
+  if(!cam.ref||!cam.known||cam.known.length!==N){resetRound(gray);status("Bereit – "+curName()+" wirft!","ready");return}
+  // Aufnahme vorbei (Spielerwechsel, Leg vorbei)? Dann erst warten, bis die Darts gezogen sind.
+  const key=gameKey();
+  if(!cam.waitPull&&key!==cam.lastKey){
+    let any=false;for(let i=0;i<N;i++)if(cam.known[i]){any=true;break}
+    if(any||cam.markers.length)cam.waitPull=true;else cam.lastKey=key;
+  }
+  if(cam.waitPull){
+    if(g.visit.length>0){cam.waitPull=false;cam.lastKey=key} // per „Zurück“ wieder in die Aufnahme zurück
+    else{
+      let kn=0;for(let i=0;i<N;i++)if(cam.known[i])kn++;
+      const de=Oche.diffMask(gray,cam.empty,cam.thr).c;
+      const gone=Oche.pulled(gray,cam.empty,cam.known,cam.thr)&&(kn>0||de<N*0.003);
+      if(gone){resetRound(gray);status("Darts gezogen. Bereit – "+curName()+" wirft!","ready")}
+      else status("Aufnahme vorbei – bitte Darts ziehen. Danach ist "+curName()+" dran.","move");
+      return}
+  }
   evaluate(gray);
 }
 function evaluate(gray){
-  const res=Oche.analyze(gray,cam.ref,cam.empty,cam.W,cam.H,cam.thr,toMM);
+  const W=cam.W,H=cam.H;
+  const res=Oche.detectDart(gray,cam.ref,cam.empty,W,H,cam.thr,{toMMpx:(x,y)=>toMM(x/W,y/H),P:boardPose(),known:cam.known});
   cam.mask=res.mask;
-  if(res.kind==="big"){cam.ref=gray;status("Großer Unterschied (Person im Bild oder Licht geändert). Neue Referenz – weiter geht’s.","ready");return}
-  if(res.kind==="darts"&&g.winner===null&&pendingCo===null){
-    const free=3-g.visit.length,list=res.darts.slice(0,free);
-    const labels=[];
-    for(const d of list){
-      const [x,y]=toMM(d.x,d.y),s=Oche.scoreMM(x,y);
-      cam.markers.push({x:d.x,y:d.y,l:s.l});
-      if(cam.markers.length>9)cam.markers.shift();
-      labels.push(s.l);throwDart(s.v,s.l,s.d);
-    }
-    status("Erkannt: "+labels.join(", ")+". Falsch? „Zurück“ und Spitze antippen.","hit");
+  if(res.kind==="big"){
+    cam.bigCount++;
+    if(cam.bigCount>=3){cam.ref=gray;cam.bigCount=0;status("Bild hat sich stark verändert (Licht?). Neu übernommen – weiter geht’s.","ready")}
+    else status("Etwas verdeckt die Scheibe …","move");
+    return}
+  cam.bigCount=0;
+  if(res.kind==="darts"&&g.winner===null&&pendingCo===null&&g.visit.length<3){
+    const d=res.darts[0],[x,y]=toMM(d.x,d.y),s=Oche.scoreMM(x,y);
+    // Dart-Pixel merken, damit Wackeln/Schatten dieses Darts nicht nochmal zählen
+    let km=new Uint8Array(W*H);for(const p of res.px||[])km[p]=1;for(let k=0;k<4;k++)km=Oche.dilate(km,W,H);
+    for(let i=0;i<km.length;i++)if(km[i])cam.known[i]=1;
+    cam.markers.push({x:d.x,y:d.y,l:s.l});if(cam.markers.length>9)cam.markers.shift();
+    throwDart(s.v,s.l,s.d);
+    if(g.visit.length===0)status("Erkannt: "+s.l+". Aufnahme vorbei – bitte Darts ziehen.","hit");
+    else status("Erkannt: "+s.l+" (Dart "+g.visit.length+"). Falsch? „Zurück“ und Spitze antippen.","hit");
   } else {
-    const diffEmpty=Oche.diffMask(gray,cam.empty,cam.thr).c;
-    if(diffEmpty<cam.W*cam.H*0.0006){cam.empty=gray;cam.markers=[]}
-    status(cam.markers.length?"Bereit – wirf! (Darts ziehen nicht vergessen)":"Bereit – wirf!","ready");
+    status(cam.markers.length?"Bereit – wirf! (Dart "+(g.visit.length+1)+")":"Bereit – "+curName()+" wirft!","ready");
   }
   cam.ref=gray;
 }
+function sizeView2(){}
 
 /* Automatische Kalibrierung: läuft im Kalibrier-Modus etwa 2x pro Sekunde */
 function runAuto(){
@@ -909,10 +1042,10 @@ function beginCal(auto){
 function finishCal(msg){
   if(!(cam.cal&&cam.cal.length===4))return;
   saveCal();cam.calMode=false;cam.checkSaved=false;
-  cam.ref=null;cam.empty=null;cam.stable=0;cam.evaluated=false;cam.markers=[];
+  cam.ref=null;cam.empty=null;cam.stable=0;cam.evaluated=false;cam.markers=[];cam.known=null;cam.waitPull=false;
   calUI();status((msg||"Kalibriert.")+" Scheibe leer lassen, gleich bereit …","move");
 }
-function emptyBoard(){cam.ref=null;cam.empty=null;cam.markers=[];cam.stable=0;cam.evaluated=false;status("Neu: Scheibe leer lassen, gleich bereit …","move")}
+function emptyBoard(){cam.ref=null;cam.empty=null;cam.markers=[];cam.known=null;cam.waitPull=false;cam.stable=0;cam.evaluated=false;status("Neu: Scheibe leer lassen, gleich bereit …","move")}
 function rotateCal(){if(!cam.calMode||!cam.auto)return;cam.rotK=(cam.rotK+1)%10;cam.autoHits=0;cam.lastAuto=0;cam.checkSaved=false}
 // Befehle vom zweiten Handy
 function camRemote(c){
@@ -1031,7 +1164,7 @@ zoomUI();
 let rc=null;
 function liveUI(){
   const c=rc||{on:false,cal:false,has:false,auto:true,z:1,msg:"Warte auf das Kamera-Handy …",kind:""};
-  $("liveMsg").textContent=c.on?c.msg:"Kamera am Kamera-Handy ist aus. Mit „Kalibrieren“ startest du sie von hier.";
+  $("liveMsg").textContent=c.on?c.msg:"Kamera am Kamera-Handy ist aus. Mit „Kamera starten“ schaltest du sie von hier ein.";
   $("liveDot").className="dot"+(c.on&&c.kind?" "+c.kind:"");
   $("liveCalBar").hidden=!(c.on&&c.cal);$("livePlay").hidden=!!(c.on&&c.cal);
   $("liveOk").disabled=!c.has;$("liveRot").disabled=!c.auto;
