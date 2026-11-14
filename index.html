@@ -82,6 +82,12 @@ button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
 .camstat{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;min-height:20px}
 .dot{width:10px;height:10px;border-radius:50%;background:var(--muted);flex:none}
 .dot.ready{background:var(--green)} .dot.move{background:#E0A100} .dot.hit{background:var(--red)}
+.zoomrow{display:flex;align-items:center;gap:8px}
+.zoomrow input{flex:1;min-width:0}
+.zoomrow .k{width:52px;height:40px;flex:none;font-family:var(--f-display);font-size:24px}
+.zlabel{font-size:13px;color:var(--muted);min-width:3.4ch;text-align:center;font-variant-numeric:tabular-nums;flex:0 1 auto}
+#livePad .zoomrow{justify-content:center}
+.zlabel b{font-family:var(--f-display);font-size:18px;color:var(--fg)}
 .camset{font-size:13px;color:var(--muted)}
 .camset summary{cursor:pointer;font-weight:600;padding:4px 0}
 .camset .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:4px 0}
@@ -167,10 +173,25 @@ button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
     <div id="livePad" hidden>
       <div class="pad" style="margin:0">
         <div class="camwrap"><video id="live" playsinline muted autoplay></video>
-          <div class="camoff" id="liveOff"><span>Noch kein Kamerabild. Auf dem Kamera-Handy „Kamera“ öffnen und „Kamera starten“ tippen.</span></div>
+          <div class="camoff" id="liveOff"><span>Noch kein Kamerabild vom Kamera-Handy.</span></div>
         </div>
-        <p class="hint">Live-Bild vom Kamera-Handy. Erkannte Würfe erscheinen oben automatisch. Korrigieren kannst du über „Pro Dart“ oder „Zurück“.</p>
-        <button class="k small" id="liveUndo">Letzten Wurf zurücknehmen</button>
+        <div class="camstat"><span class="dot" id="liveDot"></span><span id="liveMsg"></span></div>
+        <div class="camkeys" id="liveCalBar" hidden>
+          <button class="k small" id="liveRot">20 weiterdrehen</button>
+          <button class="k small ok" id="liveOk">Passt</button>
+          <button class="k small" id="liveRecal">Neu suchen</button>
+        </div>
+        <div class="camkeys" id="livePlay">
+          <button class="k small" id="liveCal">Kalibrieren</button>
+          <button class="k small" id="liveEmpty">Scheibe leer</button>
+          <button class="k small" id="liveUndo">Zurück</button>
+        </div>
+        <div class="zoomrow">
+          <button class="k small" id="liveZout" aria-label="Rauszoomen">−</button>
+          <span class="zlabel">Zoom <b id="liveZ">1,0×</b></span>
+          <button class="k small" id="liveZin" aria-label="Ranzoomen">+</button>
+        </div>
+        <p class="hint">Du steuerst die Kamera von hier, damit das Kamera-Handy nicht verrutscht. Erkannte Würfe erscheinen oben automatisch. Korrigieren: „Zurück“ oder über „Pro Dart“.</p>
       </div>
     </div>
     <div id="camPad" hidden>
@@ -179,27 +200,41 @@ button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
           <canvas id="view" width="640" height="480"></canvas>
           <div class="camoff" id="camOff">
             <div style="display:flex;flex-direction:column;gap:10px;align-items:center">
-              <span id="camOffMsg">Stell das Handy schräg seitlich oder unterhalb der Scheibe auf, etwa 1 m entfernt. Die ganze Scheibe muss im Bild sein.</span>
+              <span id="camOffMsg">Stell das Handy schräg seitlich oder unterhalb der Scheibe auf. Es darf ruhig 2 m weg stehen: Die Scheibe holst du mit dem Zoom heran. Kalibriert wird automatisch.</span>
               <button class="go" id="camStart">Kamera starten</button>
             </div>
           </div>
         </div>
         <div class="camstat"><span class="dot" id="camDot"></span><span id="camMsg">Kamera aus</span></div>
-        <div class="camkeys">
-          <button class="k small" id="camCal">Kalibrieren</button>
-          <button class="k small" id="camEmpty">Scheibe leer</button>
-          <button class="k small" id="camUndo">Zurück</button>
+        <div class="zoomrow">
+          <button class="k small" id="zOut" aria-label="Rauszoomen">−</button>
+          <input type="range" id="zoom" min="1" max="6" step="0.1" value="1" aria-label="Zoom">
+          <button class="k small" id="zIn" aria-label="Ranzoomen">+</button>
+          <span class="zlabel"><b id="zoomV">1,0×</b></span>
         </div>
-        <div class="camkeys">
-          <button class="k small miss" id="camMiss">Daneben (0)</button>
-          <button class="k small" id="camCalDone" hidden>Kalibrierung fertig</button>
-          <button class="k small" id="camStop">Kamera aus</button>
+        <div id="calBar" hidden>
+          <div class="camkeys">
+            <button class="k small" id="calRot">20 weiterdrehen</button>
+            <button class="k small ok" id="camCalDone">Passt</button>
+            <button class="k small" id="calManual">Von Hand</button>
+          </div>
+        </div>
+        <div id="playKeys" class="pad" style="margin:0">
+          <div class="camkeys">
+            <button class="k small" id="camCal">Kalibrieren</button>
+            <button class="k small" id="camEmpty">Scheibe leer</button>
+            <button class="k small" id="camUndo">Zurück</button>
+          </div>
+          <div class="camkeys" style="grid-template-columns:repeat(2,1fr)">
+            <button class="k small miss" id="camMiss">Daneben (0)</button>
+            <button class="k small" id="camStop">Kamera aus</button>
+          </div>
         </div>
         <details class="camset">
           <summary>Einstellungen Erkennung</summary>
           <div class="row"><span>Empfindlichkeit</span><input type="range" id="sens" min="10" max="60" value="28"><span id="sensV">28</span></div>
           <div class="row"><label><input type="checkbox" id="showDiff"> Erkannte Veränderung rot anzeigen</label></div>
-          <p class="hint">Tipp: Liegt ein Dart falsch, tippe auf „Zurück“ und dann im Kamerabild genau auf die Dartspitze. Ein Dart, der von der Scheibe fällt, wird nicht gesehen: dann „Daneben (0)“ drücken.</p>
+          <p class="hint">Zoomen: zwei Finger im Bild auseinanderziehen oder den Regler schieben. Ist gezoomt, verschiebst du den Ausschnitt mit einem Finger. Liegt ein Dart falsch, tippe auf „Zurück“ und dann im Bild genau auf die Dartspitze. Fällt ein Dart von der Scheibe: „Daneben (0)“.</p>
         </details>
       </div>
     </div>
@@ -395,7 +430,115 @@ const Oche=(function(){
     }
     return{kind:darts.length?"darts":"none",darts,mask:m,changed:c};
   }
-  return{checkout,scoreMM,homog,apply,toGray,diffMask,analyze,findTip,components,dilate,CAL_MM,CAL_NAMES,R};
+  /* --- Automatische Kalibrierung: Scheibe an den roten/grünen Ringen erkennen --- */
+  // 0 = nichts, 1 = rot, 2 = grün
+  function classify(rgba,N,loose){
+    const c=new Uint8Array(N);
+    for(let i=0,j=0;i<N;i++,j+=4){
+      const r=rgba[j],g=rgba[j+1],b=rgba[j+2],mx=Math.max(r,g,b),mn=Math.min(r,g,b),d=mx-mn;
+      if(mx<45||d<(loose?22:30))continue;
+      const s=d/mx;let h;
+      if(mx===r)h=60*((g-b)/d);else if(mx===g)h=120+60*((b-r)/d);else h=240+60*((r-g)/d);
+      if(h<0)h+=360;
+      if((h<=16||h>=335)&&s>=(loose?0.33:0.42)&&d>=(loose?35:45))c[i]=1;
+      else if(h>=75&&h<=175&&s>=(loose?0.2:0.27))c[i]=2;
+    }
+    return c;
+  }
+  // Ellipse durch Randpunkte legen; liefert Umrechnung Bild <-> Einheitskreis
+  function fitEllipse(pts){
+    let keep=pts,res=null;
+    for(let it=0;it<4;it++){
+      if(keep.length<12)return null;
+      let mx=0,my=0;for(const p of keep){mx+=p[0];my+=p[1]}mx/=keep.length;my/=keep.length;
+      let s=0;for(const p of keep)s+=Math.hypot(p[0]-mx,p[1]-my);s/=keep.length;if(s<1e-6)return null;
+      const AtA=[0,0,0,0,0].map(()=>[0,0,0,0,0]),Atb=[0,0,0,0,0];
+      for(const p of keep){const u=(p[0]-mx)/s,v=(p[1]-my)/s,row=[u*u,u*v,v*v,u,v];
+        for(let i=0;i<5;i++){Atb[i]+=row[i];for(let j=0;j<5;j++)AtA[i][j]+=row[i]*row[j]}}
+      const t=solve(AtA,Atb);if(!t)return null;
+      let[A,B,C,D,E]=t,k=-1;
+      if(A<0){A=-A;B=-B;C=-C;D=-D;E=-E;k=1}
+      const det=4*A*C-B*B;if(det<=1e-9)return null;
+      const u0=(B*E-2*C*D)/det,v0=(B*D-2*A*E)/det;
+      const f0=A*u0*u0+B*u0*v0+C*v0*v0+D*u0+E*v0+k;if(f0>=0)return null;
+      const M11=A/-f0,M12=B/2/-f0,M22=C/-f0,l11=Math.sqrt(M11),l12=M12/l11,l22=Math.sqrt(M22-l12*l12);
+      if(!(l11>0)||!(l22>0))return null;
+      const toQ=(x,y)=>{const u=(x-mx)/s-u0,v=(y-my)/s-v0;return[l11*u+l12*v,l22*v]};
+      const fromQ=(qx,qy)=>{const v=qy/l22,u=(qx-l12*v)/l11;return[mx+s*(u+u0),my+s*(v+v0)]};
+      const dev=keep.map(p=>Math.abs(Math.hypot(...toQ(p[0],p[1]))-1));
+      const sorted=[...dev].sort((a,b)=>a-b),med=sorted[sorted.length>>1],lim=Math.max(0.015,2.5*med);
+      res={toQ,fromQ,med,n:keep.length};
+      const nk=keep.filter((p,i)=>dev[i]<=lim);
+      if(nk.length===keep.length)break;keep=nk;
+    }
+    return res;
+  }
+  function lineCircle(c,d){ // Schnitt der Geraden c+t*d mit dem Einheitskreis (c liegt innen)
+    const n=Math.hypot(d[0],d[1]),dx=d[0]/n,dy=d[1]/n,b=c[0]*dx+c[1]*dy,disc=Math.sqrt(Math.max(0,b*b-(c[0]*c[0]+c[1]*c[1])+1));
+    return[[c[0]+(-b+disc)*dx,c[1]+(-b+disc)*dy],[c[0]+(-b-disc)*dx,c[1]+(-b-disc)*dy]];
+  }
+  function ringCal(cls,W,H,el,R,rotDeg){
+    // Bull suchen: farbige Pixel nahe der Ellipsenmitte = Bild des Scheibenmittelpunkts
+    const c0=el.fromQ(0,0),e1=el.fromQ(1,0),e2=el.fromQ(0,1);
+    const rad=Math.max(Math.hypot(e1[0]-c0[0],e1[1]-c0[1]),Math.hypot(e2[0]-c0[0],e2[1]-c0[1])),lim=42/R,span=Math.ceil(rad*lim*1.6);
+    let sx=0,sy=0,n=0;
+    for(let y=Math.max(0,Math.floor(c0[1]-span));y<=Math.min(H-1,Math.ceil(c0[1]+span));y++)
+      for(let x=Math.max(0,Math.floor(c0[0]-span));x<=Math.min(W-1,Math.ceil(c0[0]+span));x++){
+        if(!cls[y*W+x])continue;const q=el.toQ(x+0.5,y+0.5);if(q[0]*q[0]+q[1]*q[1]<lim*lim){sx+=x+0.5;sy+=y+0.5;n++}}
+    let c=[0,0];
+    if(n>=8){c=el.toQ(sx/n,sy/n);if(Math.hypot(c[0],c[1])>0.3)c=[0,0]}
+    // Zwei zueinander senkrechte Durchmesser der Scheibe im Bild konstruieren
+    const o=el.toQ(c0[0],c0[1]),up=el.toQ(c0[0],c0[1]-1),d=[up[0]-o[0],up[1]-o[1]],dn=Math.hypot(d[0],d[1]);
+    const dp=[-d[1]/dn,d[0]/dn],k=dp[0]*c[0]+dp[1]*c[1],e=[dp[0]-k*c[0],dp[1]-k*c[1]];
+    const[A,B]=lineCircle(c,d).map(q=>el.fromQ(q[0],q[1])),ci=el.fromQ(c[0],c[1]);
+    let[C,D]=lineCircle(c,e).map(q=>el.fromQ(q[0],q[1]));
+    if((A[0]-ci[0])*(C[1]-ci[1])-(A[1]-ci[1])*(C[0]-ci[0])<0)[C,D]=[D,C];
+    const Hp=homog([[0,R],[R,0],[0,-R],[-R,0]],[A,C,B,D]);if(!Hp)return null;
+    // Rot/Grün-Muster von Double- und Triple-Ring abtasten -> Drehung der Sektoren
+    const S=720,ring=[new Uint8Array(S),new Uint8Array(S)],rr=[166,103];
+    for(let j=0;j<2;j++)for(let i=0;i<S;i++){const a=i/S*2*Math.PI,[x,y]=apply(Hp,rr[j]*Math.sin(a),rr[j]*Math.cos(a)),xi=Math.floor(x),yi=Math.floor(y);
+      if(xi>=0&&yi>=0&&xi<W&&yi<H)ring[j][i]=cls[yi*W+xi]}
+    let bs=-1e9,bf=0;
+    for(let f=0;f<72;f++){let sc=0;
+      for(let i=0;i<S;i++){const ex=(Math.floor((((i-f+18)%S+S)%S)/36)%2===0)?1:2;
+        for(let j=0;j<2;j++){const v=ring[j][i];if(v)sc+=v===ex?1:-1}}
+      if(sc>bs){bs=sc;bf=f}}
+    let delta=bf*0.5;if(delta>18)delta-=36;delta+=rotDeg;
+    const pts=[0,90,180,270].map(t=>{const a=(t+delta)*Math.PI/180,p=apply(Hp,166*Math.sin(a),166*Math.cos(a));return[p[0]/W,p[1]/H]});
+    return{pts,q:bs/(2*S),R,bull:n>=8};
+  }
+  function autoCalOnce(cls,W,H,rotDeg){
+    const N=W*H,m=new Uint8Array(N);for(let i=0;i<N;i++)m[i]=cls[i]?1:0;
+    const comps=components(dilate(dilate(m,W,H),W,H),W,H,Math.round(N*0.002)),minDim=Math.min(W,H),cands=[];
+    for(const px of comps.slice(0,6)){
+      let x0=W,x1=0,y0=H,y1=0;for(const p of px){const x=p%W,y=(p/W)|0;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y}
+      if(x1-x0<minDim*0.18||y1-y0<minDim*0.18)continue;
+      cands.push({px,bx:(x0+x1)/2,by:(y0+y1)/2,area:(x1-x0)*(y1-y0)});
+    }
+    cands.sort((a,b)=>b.area-a.area);
+    let best=null;
+    for(const c of cands.slice(0,3)){
+      const BINS=120,far=new Float32Array(BINS).fill(-1),pt=new Array(BINS);
+      for(const p of c.px){if(!cls[p])continue;const x=p%W+0.5,y=((p/W)|0)+0.5,dx=x-c.bx,dy=y-c.by,r=dx*dx+dy*dy;
+        const b=Math.min(BINS-1,Math.floor((Math.atan2(dy,dx)+Math.PI)/(2*Math.PI)*BINS));
+        if(r>far[b]){far[b]=r;pt[b]=[x,y]}}
+      const pts=pt.filter(Boolean);if(pts.length<BINS*0.5)continue;
+      const el=fitEllipse(pts);if(!el)continue;
+      for(const R of [170,107]){const r=ringCal(cls,W,H,el,R,rotDeg);if(r&&(!best||r.q>best.q))best=r}
+    }
+    return best;
+  }
+  function autoCal(rgba,W,H,rotDeg){
+    let best=null;
+    for(const loose of [false,true]){
+      const r=autoCalOnce(classify(rgba,W*H,loose),W,H,rotDeg||0);
+      if(r&&(!best||r.q>best.q))best=r;
+      if(best&&best.q>=0.5)break;
+    }
+    return best&&best.q>=0.3?best:null;
+  }
+  const SECT_ORDER=SECT;
+  return{checkout,scoreMM,homog,apply,toGray,diffMask,analyze,findTip,components,dilate,autoCal,classify,SECT_ORDER,CAL_MM,CAL_NAMES,R};
 })();
 if(typeof module!=="undefined")module.exports=Oche;
 
@@ -601,45 +744,80 @@ document.addEventListener("click",wake);
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")wake()});
 
 /* =====================================================================
-   TEIL C: Kamera
+   TEIL C: Kamera (Zoom, automatische Kalibrierung, Erkennung)
    ===================================================================== */
+const ZKEY="oche-zoom";
 const cam={stream:null,video:document.createElement("video"),proc:document.createElement("canvas"),
-  W:400,H:300,timer:null,raf:0,ref:null,empty:null,prev:null,stable:0,evaluated:false,
-  markers:[],thr:28,showDiff:false,mask:null,cal:null,H2mm:null,Hmm2img:null,calMode:false,drag:-1,dragOff:[0,0],down:null};
+  W:480,H:270,timer:null,raf:0,ref:null,empty:null,prev:null,stable:0,evaluated:false,
+  markers:[],thr:28,showDiff:false,mask:null,cal:null,H2mm:null,Hmm2img:null,manual:false,
+  calMode:false,auto:true,rotK:0,autoHits:0,lastAuto:0,checkSaved:false,
+  drag:-1,dragOff:[0,0],down:null,pinch:null,z:1,px:0.5,py:0.5,msg:"Kamera aus",kind:"",starting:false};
 cam.video.playsInline=true;cam.video.muted=true;cam.video.setAttribute("playsinline","");
 const view=$("view"),vctx=view.getContext("2d");
 const pctx=cam.proc.getContext("2d",{willReadFrequently:true});
 const maskCanvas=document.createElement("canvas"),mctx=maskCanvas.getContext("2d");
-
-try{const c=JSON.parse(localStorage.getItem(CALKEY)||"null");if(c&&c.length===4)setCal(c)}catch(e){}
-try{const t=parseInt(localStorage.getItem("oche-sens")||"",10);if(t>=10&&t<=60)cam.thr=t}catch(e){}
-$("sens").value=cam.thr;$("sensV").textContent=cam.thr;
+const acv=document.createElement("canvas"),actx=acv.getContext("2d",{willReadFrequently:true});
 
 function setCal(pts){
   cam.cal=pts;
   if(pts&&pts.length===4){cam.H2mm=Oche.homog(pts,Oche.CAL_MM);cam.Hmm2img=Oche.homog(Oche.CAL_MM,pts)}
   else{cam.H2mm=null;cam.Hmm2img=null}
 }
-function saveCal(){try{localStorage.setItem(CALKEY,JSON.stringify(cam.cal))}catch(e){}}
+function saveCal(){try{localStorage.setItem(CALKEY,JSON.stringify({pts:cam.cal,manual:cam.manual}))}catch(e){}}
+try{let c=JSON.parse(localStorage.getItem(CALKEY)||"null");if(Array.isArray(c))c={pts:c,manual:true};
+  if(c&&c.pts&&c.pts.length===4){setCal(c.pts);cam.manual=!!c.manual}}catch(e){}
+try{const t=parseInt(localStorage.getItem("oche-sens")||"",10);if(t>=10&&t<=60)cam.thr=t}catch(e){}
+try{const z=JSON.parse(localStorage.getItem(ZKEY)||"null");if(z&&z.z>=1&&z.z<=6){cam.z=z.z;cam.px=+z.px||0.5;cam.py=+z.py||0.5}}catch(e){}
+$("sens").value=cam.thr;$("sensV").textContent=cam.thr;
 const toMM=(x,y)=>Oche.apply(cam.H2mm,x,y);
-function status(t,kind){$("camMsg").textContent=t;$("camDot").className="dot"+(kind?" "+kind:"")}
+let camNoteT=null;
+function camNotify(){if(role!=="host")return;clearTimeout(camNoteT);camNoteT=setTimeout(()=>net.broadcast(),150)}
+function camInfo(){return{on:!!cam.stream,cal:cam.calMode,has:!!(cam.cal&&cam.cal.length===4),auto:cam.auto,z:cam.z,msg:cam.msg,kind:cam.kind}}
+function status(t,kind){if(t===cam.msg&&(kind||"")===cam.kind)return;cam.msg=t;cam.kind=kind||"";$("camMsg").textContent=t;$("camDot").className="dot"+(kind?" "+kind:"");camNotify()}
+
+/* Zoom: Ausschnitt des Kamerabilds (z = Vergrößerung, px/py = Mitte des Ausschnitts) */
+function crop(){const w=1/cam.z;return{x:Math.min(1-w,Math.max(0,cam.px-w/2)),y:Math.min(1-w,Math.max(0,cam.py-w/2)),w}}
+function zoomUI(){$("zoom").value=cam.z;$("zoomV").textContent=cam.z.toFixed(1).replace(".",",")+"×";camNotify()}
+function setZoom(z,px,py){
+  const o=crop();
+  cam.z=Math.min(6,Math.max(1,z));
+  const w=1/cam.z;cam.px=Math.min(1-w/2,Math.max(w/2,px));cam.py=Math.min(1-w/2,Math.max(w/2,py));
+  const n=crop();
+  if(Math.abs(n.x-o.x)<1e-6&&Math.abs(n.y-o.y)<1e-6&&Math.abs(n.w-o.w)<1e-6){zoomUI();return}
+  // Kalibrierung und Markierungen in den neuen Ausschnitt umrechnen
+  const f=p=>[(o.x+p[0]*o.w-n.x)/n.w,(o.y+p[1]*o.w-n.y)/n.w];
+  if(cam.cal&&cam.cal.length){const c=cam.cal.map(f);if(c.length===4)setCal(c);else cam.cal=c}
+  cam.markers.forEach(m=>{const q=f([m.x,m.y]);m.x=q[0];m.y=q[1]});
+  cam.ref=null;cam.empty=null;cam.prev=null;cam.stable=0;cam.evaluated=false;cam.mask=null;cam.autoHits=0;
+  try{localStorage.setItem(ZKEY,JSON.stringify({z:cam.z,px:cam.px,py:cam.py}))}catch(e){}
+  if(cam.cal&&cam.cal.length===4&&!cam.calMode)saveCal();
+  zoomUI();
+  if(cam.stream&&!cam.calMode)status("Zoom geändert. Scheibe leer lassen, gleich bereit …","move");
+}
 
 async function startCam(){
+  if(cam.stream||cam.starting)return;
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
-    $("camOffMsg").textContent="Dieser Browser gibt die Kamera hier nicht frei. Öffne die Seite über deinen https-Link (GitHub Pages) in Chrome oder Safari.";return}
+    $("camOffMsg").textContent="Dieser Browser gibt die Kamera hier nicht frei. Öffne die Seite über deinen https-Link (GitHub Pages) in Chrome oder Safari.";status("Kamera nicht verfügbar","hit");return}
+  cam.starting=true;
   try{
-    cam.stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}}});
+    cam.stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}}});
   }catch(e){
-    $("camOffMsg").textContent=e&&e.name==="NotAllowedError"?"Kamera-Zugriff wurde abgelehnt. Erlaube die Kamera in den Browser-Einstellungen für diese Seite und lade neu.":"Kamera konnte nicht gestartet werden ("+(e&&e.name||"Fehler")+").";return}
+    cam.starting=false;
+    $("camOffMsg").textContent=e&&e.name==="NotAllowedError"?"Kamera-Zugriff wurde abgelehnt. Erlaube die Kamera in den Browser-Einstellungen für diese Seite und lade neu.":"Kamera konnte nicht gestartet werden ("+(e&&e.name||"Fehler")+").";
+    status("Kamera konnte nicht gestartet werden. Bitte direkt am Kamera-Handy „Kamera starten“ tippen.","hit");return}
   cam.video.srcObject=cam.stream;await cam.video.play().catch(()=>{});
   await new Promise(r=>{if(cam.video.videoWidth)r();else cam.video.onloadedmetadata=()=>r()});
+  cam.starting=false;
   const vw=cam.video.videoWidth,vh=cam.video.videoHeight,s=Math.min(1,960/Math.max(vw,vh));
   view.width=Math.round(vw*s);view.height=Math.round(vh*s);
-  cam.W=vw>=vh?400:Math.round(400*vw/vh);cam.H=Math.round(cam.W*vh/vw);
+  const sp=480/Math.max(vw,vh);cam.W=Math.round(vw*sp);cam.H=Math.round(vh*sp);
   cam.proc.width=cam.W;cam.proc.height=cam.H;maskCanvas.width=cam.W;maskCanvas.height=cam.H;
-  cam.ref=null;cam.empty=null;cam.prev=null;cam.stable=0;
-  $("camOff").hidden=true;
-  if(!cam.cal)beginCal();else status("Kamera läuft – Scheibe leer lassen, gleich bereit …","move");
+  const sa=560/Math.max(vw,vh);acv.width=Math.round(vw*sa);acv.height=Math.round(vh*sa);
+  cam.ref=null;cam.empty=null;cam.prev=null;cam.stable=0;cam.markers=[];
+  $("camOff").hidden=true;zoomUI();
+  if(cam.cal&&cam.cal.length===4&&cam.manual){calUI();status("Kalibrierung von Hand geladen. Handy bewegt? Dann „Kalibrieren“. Sonst Scheibe leer lassen, gleich bereit …","move")}
+  else{cam.checkSaved=!!(cam.cal&&cam.cal.length===4);cam.rotK=0;beginCal(true)}
   cam.timer=setInterval(tick,120);
   setTimeout(()=>netCallAll(),300);
   const loop=()=>{draw();cam.raf=requestAnimationFrame(loop)};loop();
@@ -648,18 +826,24 @@ function stopCam(){
   netHangup();
   clearInterval(cam.timer);cancelAnimationFrame(cam.raf);cam.timer=null;
   if(cam.stream){cam.stream.getTracks().forEach(t=>t.stop());cam.stream=null}
-  $("camOff").hidden=false;status("Kamera aus");endCalUI();
+  cam.calMode=false;cam.pinch=null;cam.drag=-1;cam.down=null;ptrs.clear();
+  $("camOff").hidden=false;calUI();status("Kamera aus");
 }
 function sizeView(){}
 
 /* Bildverarbeitung, ca. 8x pro Sekunde */
-function grab(){pctx.drawImage(cam.video,0,0,cam.W,cam.H);return Oche.toGray(pctx.getImageData(0,0,cam.W,cam.H).data,cam.W*cam.H)}
+function srcRect(){const c=crop(),vw=cam.video.videoWidth,vh=cam.video.videoHeight;return[c.x*vw,c.y*vh,c.w*vw,c.w*vh]}
+function grab(){const[sx,sy,sw,sh]=srcRect();pctx.drawImage(cam.video,sx,sy,sw,sh,0,0,cam.W,cam.H);return Oche.toGray(pctx.getImageData(0,0,cam.W,cam.H).data,cam.W*cam.H)}
 function tick(){
   if(!cam.stream||cam.video.readyState<2)return;
   const gray=grab(),N=cam.W*cam.H;
   if(!cam.prev){cam.prev=gray;return}
   const mot=Oche.diffMask(gray,cam.prev,cam.thr).c/N;cam.prev=gray;
-  if(cam.calMode)return;
+  if(cam.calMode){
+    if(mot>0.004){cam.autoHits=0;return}
+    const now=Date.now();
+    if(cam.auto&&cam.drag<0&&!cam.pinch&&now-cam.lastAuto>550){cam.lastAuto=now;runAuto()}
+    return}
   if(mot>0.0015){cam.stable=0;cam.evaluated=false;if(cam.ref)status("Bewegung …","move");return}
   cam.stable++;
   if(cam.stable<4||cam.evaluated)return;
@@ -690,12 +874,65 @@ function evaluate(gray){
   cam.ref=gray;
 }
 
+/* Automatische Kalibrierung: läuft im Kalibrier-Modus etwa 2x pro Sekunde */
+function runAuto(){
+  const[sx,sy,sw,sh]=srcRect();
+  let res=null;
+  try{actx.drawImage(cam.video,sx,sy,sw,sh,0,0,acv.width,acv.height);
+    res=Oche.autoCal(actx.getImageData(0,0,acv.width,acv.height).data,acv.width,acv.height,cam.rotK*36)}catch(e){}
+  const old=cam.cal&&cam.cal.length===4?cam.cal:null;
+  if(!res){cam.autoHits=0;
+    status(old?"Scheibe gerade nicht erkannt. Die Linien zeigen die letzte Kalibrierung. Passt sie noch, tippe „Passt“.":"Suche die Scheibe … Hol sie ganz ins Bild, zoom ran und sorge für gutes Licht.","move");
+    calUI();return}
+  const dist=old?Math.max(...res.pts.map((p,i)=>Math.hypot(p[0]-old[i][0],p[1]-old[i][1]))):1;
+  if(cam.checkSaved){cam.checkSaved=false;if(dist<0.012){cam.manual=false;finishCal("Kalibrierung passt noch.");return}}
+  let pts=res.pts;
+  if(dist<0.012){pts=pts.map((p,i)=>[(p[0]+old[i][0])/2,(p[1]+old[i][1])/2]);cam.autoHits++}else cam.autoHits=1;
+  setCal(pts);
+  if(cam.autoHits>=5&&res.q>=0.45){cam.manual=false;finishCal("Scheibe erkannt und kalibriert.");return}
+  status("Scheibe erkannt. Steht die 20 oben und liegen die Linien richtig? Wird gleich von selbst übernommen.","ready");
+  calUI();
+}
+const CAL_HELP=["Tippe auf die Mitte des Double-Rings (äußerer schmaler Ring) bei der 20.","Jetzt Double-Ring bei der 6 (rechts).","Jetzt Double-Ring bei der 3 (unten).","Jetzt Double-Ring bei der 11 (links)."];
+function calUI(){
+  $("calBar").hidden=!cam.calMode;$("playKeys").hidden=cam.calMode;
+  $("camCalDone").disabled=!(cam.cal&&cam.cal.length===4);
+  $("calRot").disabled=!cam.auto;$("calManual").textContent=cam.auto?"Von Hand":"Automatisch";
+  camNotify();
+}
+function beginCal(auto){
+  cam.calMode=true;cam.auto=auto;cam.autoHits=0;cam.lastAuto=0;cam.drag=-1;
+  if(auto)status("Suche die Scheibe …","move");
+  else{setCal(null);cam.cal=[];status(CAL_HELP[0],"move")}
+  calUI();
+}
+function finishCal(msg){
+  if(!(cam.cal&&cam.cal.length===4))return;
+  saveCal();cam.calMode=false;cam.checkSaved=false;
+  cam.ref=null;cam.empty=null;cam.stable=0;cam.evaluated=false;cam.markers=[];
+  calUI();status((msg||"Kalibriert.")+" Scheibe leer lassen, gleich bereit …","move");
+}
+function emptyBoard(){cam.ref=null;cam.empty=null;cam.markers=[];cam.stable=0;cam.evaluated=false;status("Neu: Scheibe leer lassen, gleich bereit …","move")}
+function rotateCal(){if(!cam.calMode||!cam.auto)return;cam.rotK=(cam.rotK+1)%10;cam.autoHits=0;cam.lastAuto=0;cam.checkSaved=false}
+// Befehle vom zweiten Handy
+function camRemote(c){
+  if(c==="cal"){if(mode!=="cam"){mode="cam";render()}
+    if(!cam.stream)startCam();else{cam.rotK=0;cam.checkSaved=false;beginCal(true)}}
+  else if(!cam.stream)return;
+  else if(c==="ok"){if(cam.calMode){cam.manual=!cam.auto;finishCal()}}
+  else if(c==="rot")rotateCal();
+  else if(c==="empty"){if(!cam.calMode)emptyBoard()}
+  else if(c==="zin")setZoom(cam.z*1.25,cam.px,cam.py);
+  else if(c==="zout")setZoom(cam.z/1.25,cam.px,cam.py);
+}
+
 /* Zeichnen */
 function toView(x,y){return[x*view.width,y*view.height]}
 function draw(){
   if(!cam.stream)return;
-  vctx.drawImage(cam.video,0,0,view.width,view.height);
-  if(cam.showDiff&&cam.mask){
+  const[sx,sy,sw,sh]=srcRect();
+  vctx.drawImage(cam.video,sx,sy,sw,sh,0,0,view.width,view.height);
+  if(cam.showDiff&&cam.mask&&cam.mask.length===cam.W*cam.H){
     const id=mctx.createImageData(cam.W,cam.H);for(let i=0;i<cam.mask.length;i++)if(cam.mask[i]){id.data[i*4]=255;id.data[i*4+3]=170}
     mctx.putImageData(id,0,0);vctx.drawImage(maskCanvas,0,0,view.width,view.height);
   }
@@ -709,12 +946,17 @@ function draw(){
     for(let k=0;k<20;k++){const t=(k*18+9)*Math.PI/180;
       const[a1,b1]=Oche.apply(cam.Hmm2img,R.outerBull*Math.sin(t),R.outerBull*Math.cos(t)),[a2,b2]=Oche.apply(cam.Hmm2img,R.dOut*Math.sin(t),R.dOut*Math.cos(t));
       vctx.beginPath();vctx.moveTo(...toView(a1,b1));vctx.lineTo(...toView(a2,b2));vctx.stroke()}
+    if(cam.calMode){ // Zahlen einblenden, damit man sieht, wo die App die 20 vermutet
+      vctx.font="700 "+Math.round(lw*11)+"px Barlow Condensed, sans-serif";vctx.textAlign="center";vctx.textBaseline="middle";
+      for(let k=0;k<20;k++){const t=k*18*Math.PI/180,[ix,iy]=Oche.apply(cam.Hmm2img,193*Math.sin(t),193*Math.cos(t)),[px,py]=toView(ix,iy),tx=String(Oche.SECT_ORDER[k]);
+        vctx.lineWidth=lw*2.5;vctx.strokeStyle="rgba(0,0,0,.8)";vctx.strokeText(tx,px,py);vctx.fillStyle=k===0?"#FFD23F":"#fff";vctx.fillText(tx,px,py)}
+      vctx.textAlign="start";vctx.textBaseline="alphabetic";
+    }
   }
-  if(cam.calMode&&cam.cal){
+  if(cam.calMode&&cam.cal&&!cam.auto){
     cam.cal.forEach((p,i)=>{const[x,y]=toView(p[0],p[1]);
       vctx.fillStyle="rgba(242,82,106,.9)";vctx.beginPath();vctx.arc(x,y,lw*6,0,7);vctx.fill();
-      vctx.strokeStyle="#fff";vctx.lineWidth=lw;vctx.beginPath();vctx.moveTo(x-lw*10,y);vctx.lineTo(x+lw*10,y);vctx.moveTo(x,y-lw*10);vctx.lineTo(x,y+lw*10);vctx.stroke();
-      vctx.font="600 "+Math.round(lw*12)+"px Barlow, sans-serif";vctx.fillStyle="#fff";vctx.fillText(Oche.CAL_NAMES[i],x+lw*8,y-lw*8)});
+      vctx.strokeStyle="#fff";vctx.lineWidth=lw;vctx.beginPath();vctx.moveTo(x-lw*10,y);vctx.lineTo(x+lw*10,y);vctx.moveTo(x,y-lw*10);vctx.lineTo(x,y+lw*10);vctx.stroke()});
   }
   vctx.font="700 "+Math.round(lw*13)+"px Barlow Condensed, sans-serif";
   for(const m of cam.markers){const[x,y]=toView(m.x,m.y);
@@ -723,46 +965,86 @@ function draw(){
     vctx.fillStyle="#FFD23F";vctx.fillText(m.l,x+lw*11,y-lw*4)}
 }
 
-/* Kalibrierung + Antippen */
-const CAL_HELP=["Tippe auf die Mitte des Double-Rings (äußerer schmaler Ring) bei der 20.","Jetzt Double-Ring bei der 6 (rechts).","Jetzt Double-Ring bei der 3 (unten).","Jetzt Double-Ring bei der 11 (links)."];
-function beginCal(){cam.calMode=true;setCal(null);$("camCalDone").hidden=true;$("camMiss").hidden=true;status(CAL_HELP[0],"move")}
-function endCalUI(){cam.calMode=false;$("camCalDone").hidden=true;$("camMiss").hidden=false}
+/* Finger im Kamerabild: zwei Finger = zoomen, ziehen = verschieben, tippen = Dart setzen */
+const ptrs=new Map();
 function pos(e){const r=view.getBoundingClientRect();return[(e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height]}
+function pinchInfo(){const[a,b]=[...ptrs.values()];return{d:Math.hypot(a.cx-b.cx,a.cy-b.cy),m:[(a.x+b.x)/2,(a.y+b.y)/2]}}
 view.addEventListener("pointerdown",e=>{
   if(!cam.stream)return;const[x,y]=pos(e);
-  cam.down={x,y,t:Date.now()};
+  ptrs.set(e.pointerId,{x,y,cx:e.clientX,cy:e.clientY});
+  try{view.setPointerCapture(e.pointerId)}catch(_){}
+  if(ptrs.size>=2){cam.drag=-1;cam.down=null;
+    if(ptrs.size===2){const p=pinchInfo();cam.pinch={d0:Math.max(10,p.d),m0:p.m,c0:crop(),z0:cam.z}}
+    return}
+  cam.down={x,y,c0:crop(),moved:false};
   if(cam.calMode){
     const pts=cam.cal||[];
-    if(pts.length<4){pts.push([x,y]);setCal(pts.length===4?pts:null);cam.cal=pts;
-      if(pts.length<4)status(CAL_HELP[pts.length],"move");
-      else{status("Passen die grünen Linien zur Scheibe? Rote Punkte verschieben zum Feinjustieren, dann „Kalibrierung fertig“.","move");$("camCalDone").hidden=false}
-      cam.down=null;return}
-    let best=-1,bd=0.06;pts.forEach((p,i)=>{const d=Math.hypot((p[0]-x)*view.width/view.height,p[1]-y);if(d<bd){bd=d;best=i}});
-    if(best>=0){cam.drag=best;cam.dragOff=[pts[best][0]-x,pts[best][1]-y];view.setPointerCapture(e.pointerId)}
+    if(!cam.auto&&pts.length<4){pts.push([x,y]);if(pts.length===4)setCal(pts);else{setCal(null);cam.cal=pts}
+      status(pts.length<4?CAL_HELP[pts.length]:"Passen die grünen Linien? Rote Punkte verschieben zum Feinjustieren, dann „Passt“.","move");
+      calUI();cam.down=null;return}
+    if(!cam.auto&&pts.length===4){
+      let best=-1,bd=0.07;pts.forEach((p,i)=>{const d=Math.hypot((p[0]-x)*view.width/view.height,p[1]-y);if(d<bd){bd=d;best=i}});
+      if(best>=0){cam.drag=best;cam.dragOff=[pts[best][0]-x,pts[best][1]-y];cam.down=null}
+    }
   }
 });
 view.addEventListener("pointermove",e=>{
-  if(cam.drag<0)return;const[x,y]=pos(e);
-  cam.cal[cam.drag]=[x+cam.dragOff[0],y+cam.dragOff[1]];setCal(cam.cal);
+  const p=ptrs.get(e.pointerId);if(!p)return;const[x,y]=pos(e);p.x=x;p.y=y;p.cx=e.clientX;p.cy=e.clientY;
+  if(cam.pinch&&ptrs.size===2){const q=pinchInfo(),P=cam.pinch,z=Math.min(6,Math.max(1,P.z0*q.d/P.d0)),w=1/z;
+    const vx=P.c0.x+P.m0[0]*P.c0.w,vy=P.c0.y+P.m0[1]*P.c0.w;
+    setZoom(z,vx-q.m[0]*w+w/2,vy-q.m[1]*w+w/2);return}
+  if(cam.drag>=0){cam.cal[cam.drag]=[x+cam.dragOff[0],y+cam.dragOff[1]];setCal(cam.cal);return}
+  const d=cam.down;if(!d||cam.z<=1.001)return;
+  if(!d.moved&&Math.hypot(x-d.x,y-d.y)<0.04)return;
+  d.moved=true;const w=d.c0.w;setZoom(cam.z,d.c0.x-(x-d.x)*w+w/2,d.c0.y-(y-d.y)*w+w/2);
 });
-view.addEventListener("pointerup",e=>{
+function ptrEnd(e){
+  if(!ptrs.has(e.pointerId))return;ptrs.delete(e.pointerId);
+  if(cam.pinch){if(ptrs.size<2)cam.pinch=null;cam.down=null;return}
   if(cam.drag>=0){cam.drag=-1;return}
-  if(!cam.down||cam.calMode||!cam.H2mm)return;
-  const[x,y]=pos(e),d=cam.down;cam.down=null;
-  if(Math.hypot(x-d.x,y-d.y)>0.03)return;
+  const d=cam.down;cam.down=null;
+  if(!d||d.moved||e.type!=="pointerup"||cam.calMode||!cam.H2mm)return;
+  const[x,y]=pos(e);if(Math.hypot(x-d.x,y-d.y)>0.03)return;
   const[mx,my]=toMM(x,y),s=Oche.scoreMM(mx,my);
   if(throwDart(s.v,s.l,s.d)){cam.markers.push({x,y,l:s.l});status("Von Hand gesetzt: "+s.l,"hit")}
-});
+}
+view.addEventListener("pointerup",ptrEnd);view.addEventListener("pointercancel",ptrEnd);
+
 $("camStart").onclick=startCam;
 $("camStop").onclick=stopCam;
-$("camCal").onclick=()=>{if(!cam.stream){startCam().then(()=>{if(cam.stream)beginCal()});return}beginCal()};
-$("camCalDone").onclick=()=>{if(cam.cal&&cam.cal.length===4){saveCal();endCalUI();cam.ref=null;cam.stable=0;cam.evaluated=false;status("Kalibriert. Scheibe leer lassen, gleich bereit …","move")}};
-$("camEmpty").onclick=()=>{cam.ref=null;cam.empty=null;cam.markers=[];cam.stable=0;cam.evaluated=false;status("Neu: Scheibe leer lassen, gleich bereit …","move")};
+$("camCal").onclick=()=>{if(!cam.stream){startCam();return}cam.rotK=0;cam.checkSaved=false;beginCal(true)};
+$("camCalDone").onclick=()=>{cam.manual=!cam.auto;finishCal()};
+$("calRot").onclick=rotateCal;
+$("calManual").onclick=()=>{cam.checkSaved=false;beginCal(!cam.auto)};
+$("camEmpty").onclick=emptyBoard;
 $("camUndo").onclick=doUndo;
 $("camMiss").onclick=()=>{throwDart(0,"0",false)};
+$("zoom").oninput=e=>setZoom(+e.target.value,cam.px,cam.py);
+$("zIn").onclick=()=>setZoom(cam.z*1.25,cam.px,cam.py);
+$("zOut").onclick=()=>setZoom(cam.z/1.25,cam.px,cam.py);
 $("sens").oninput=e=>{cam.thr=+e.target.value;$("sensV").textContent=cam.thr;try{localStorage.setItem("oche-sens",cam.thr)}catch(_){}};
 $("showDiff").onchange=e=>cam.showDiff=e.target.checked;
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden"&&cam.stream)stopCam()});
+zoomUI();
+
+/* Fernbedienung der Kamera vom zweiten Handy aus */
+let rc=null;
+function liveUI(){
+  const c=rc||{on:false,cal:false,has:false,auto:true,z:1,msg:"Warte auf das Kamera-Handy …",kind:""};
+  $("liveMsg").textContent=c.on?c.msg:"Kamera am Kamera-Handy ist aus. Mit „Kalibrieren“ startest du sie von hier.";
+  $("liveDot").className="dot"+(c.on&&c.kind?" "+c.kind:"");
+  $("liveCalBar").hidden=!(c.on&&c.cal);$("livePlay").hidden=!!(c.on&&c.cal);
+  $("liveOk").disabled=!c.has;$("liveRot").disabled=!c.auto;
+  $("liveCal").textContent=c.on?"Kalibrieren":"Kamera starten";
+  $("liveZ").textContent=(c.z||1).toFixed(1).replace(".",",")+"×";
+  if(!c.on)$("liveOff").hidden=false;
+}
+const camCmd=c=>net.send({a:"cam",c});
+$("liveCal").onclick=()=>camCmd("cal");$("liveRecal").onclick=()=>camCmd("cal");
+$("liveOk").onclick=()=>camCmd("ok");$("liveRot").onclick=()=>camCmd("rot");
+$("liveEmpty").onclick=()=>camCmd("empty");
+$("liveZin").onclick=()=>camCmd("zin");$("liveZout").onclick=()=>camCmd("zout");
+liveUI();
 
 
 /* =====================================================================
@@ -774,7 +1056,7 @@ const BASE=location.origin+location.pathname;
 function chip(txt,kind){$("netChip").hidden=!txt;$("netTxt").textContent=txt||"";$("netDot").className="dot"+(kind?" "+kind:"")}
 function netErr(t){$("netErr").textContent=t||""}
 function showNet(which){$("netIdle").hidden=which!=="idle";$("netHost").hidden=which!=="host";$("netGuest").hidden=which!=="guest";$("netStop").hidden=which==="idle"}
-function stateMsg(){return{t:"state",cfg,g,toast}}
+function stateMsg(){return{t:"state",cfg,g,toast,cam:camInfo()}}
 net.broadcast=function(){const m=stateMsg();conns.forEach(c=>{try{if(c.open)c.send(m)}catch(e){}})};
 net.send=function(m){m.t="act";if(hostConn&&hostConn.open){try{hostConn.send(m)}catch(e){}}else{toast={t:"bust",m:"Keine Verbindung zum Kamera-Handy."};render()}};
 function hostStatus(){
@@ -813,6 +1095,7 @@ function hostAct(d){
   else if(d.a==="undo")undoState();
   else if(d.a==="total"){if(v<0||v>180)return;doTotal(v)}
   else if(d.a==="co"){const n=Math.round(+d.n);if(n<1||n>3)return;applyCo(v,n)}
+  else if(d.a==="cam"){if(["cal","ok","rot","empty","zin","zout"].includes(d.c))camRemote(d.c)}
   else if(d.a==="new"&&d.cfg){const c=d.cfg;
     if(![301,501,701].includes(c.start)||!Array.isArray(c.names)||c.names.length<1||c.names.length>4)return;
     cam.markers=[];newGame({start:c.start,dbl:!!c.dbl,legs:Math.min(9,Math.max(1,+c.legs||1)),names:c.names.map((x,i)=>String(x||"").slice(0,24)||"Spieler "+(i+1))})}
@@ -843,7 +1126,7 @@ function connectHost(){
   if(peer.disconnected){try{peer.reconnect()}catch(e){}scheduleRetry();return}
   const c=peer.connect(PREFIX+joinCode,{reliable:true});hostConn=c;
   c.on("open",()=>{role="guest";pendingCo=null;tIn="";$("guestTitle").textContent="Gekoppelt mit Code "+joinCode;$("guestState").textContent="Du siehst jetzt das Spiel vom Kamera-Handy.";chip("Gekoppelt","ready");setTimeout(()=>{if(!$("netSheet").hidden)$("netSheet").hidden=true},900)});
-  c.on("data",d=>{if(d&&d.t==="state"&&d.g&&d.cfg){g=d.g;cfg=d.cfg;toast=d.toast||null;render()}});
+  c.on("data",d=>{if(d&&d.t==="state"&&d.g&&d.cfg){g=d.g;cfg=d.cfg;toast=d.toast||null;if(d.cam)rc=d.cam;render();liveUI()}});
   c.on("close",()=>{if(hostConn===c){hostConn=null;if(joinCode){chip("Getrennt","hit");$("guestTitle").textContent="Verbindung verloren";$("guestState").textContent="Ich verbinde automatisch neu …";scheduleRetry()}}});
   c.on("error",()=>{});
 }
