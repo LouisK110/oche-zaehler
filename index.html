@@ -186,6 +186,9 @@ button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
           <button class="k small" id="liveEmpty">Scheibe leer</button>
           <button class="k small" id="liveUndo">Zurück</button>
         </div>
+        <div class="camkeys" style="grid-template-columns:1fr">
+          <button class="k small" id="liveSnap">Fehlerbild holen (für Claude)</button>
+        </div>
         <div class="zoomrow">
           <button class="k small" id="liveZout" aria-label="Rauszoomen">−</button>
           <span class="zlabel">Zoom <b id="liveZ">1,0×</b></span>
@@ -225,8 +228,9 @@ button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
             <button class="k small" id="camEmpty">Scheibe leer</button>
             <button class="k small" id="camUndo">Zurück</button>
           </div>
-          <div class="camkeys" style="grid-template-columns:repeat(2,1fr)">
+          <div class="camkeys">
             <button class="k small miss" id="camMiss">Daneben (0)</button>
+            <button class="k small" id="camSnap">Fehlerbild</button>
             <button class="k small" id="camStop">Kamera aus</button>
           </div>
         </div>
@@ -286,6 +290,19 @@ button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
       <button class="ghost" id="netStop" hidden>Kopplung beenden</button>
       <button class="go" id="netClose">Zurück zum Spiel</button>
     </div>
+  </div>
+</div>
+
+<div class="sheet" id="snapSheet" hidden>
+  <div class="in">
+    <h2>Fehlerbild</h2>
+    <p class="hint">Hier siehst du, was die Kamera bei den letzten Würfen gesehen hat: links das Bild davor, in der Mitte danach mit dem Raster der Kalibrierung, rechts die Veränderung (rot) und wo die App den Dart vermutet (gelbe Linie, Kreis = Spitze). Speichere das Bild und schick es Claude im Chat.</p>
+    <img id="snapImg" alt="Fehlerbild" style="width:100%;border-radius:8px;margin:10px 0;background:#000">
+    <div class="camkeys" style="grid-template-columns:repeat(2,1fr)">
+      <a class="k small ok" id="snapSave" download="oche-fehlerbild.jpg" style="display:flex;align-items:center;justify-content:center;text-decoration:none">Bild speichern</a>
+      <button class="k small" id="snapClose">Schließen</button>
+    </div>
+    <p class="hint">Falls „Speichern“ nicht klappt: Bild lange gedrückt halten → „Bild speichern“, oder einen Screenshot machen.</p>
   </div>
 </div>
 
@@ -373,6 +390,21 @@ const Oche=(function(){
 
   /* --- Bildvergleich --- */
   function toGray(rgba,N){const g=new Uint8Array(N);for(let i=0,j=0;i<N;i++,j+=4)g[i]=(rgba[j]*77+rgba[j+1]*150+rgba[j+2]*29)>>8;return g}
+  // Helligkeit von cur an ref angleichen (Handy regelt Belichtung nach, wenn jemand vor der Scheibe steht)
+  function matchTo(cur,ref){
+    const N=cur.length,B=16,hist=[];for(let b=0;b<B;b++)hist.push(new Uint32Array(256));
+    const cnt=new Uint32Array(B);
+    for(let i=0;i<N;i+=3){const v=cur[i],b=v>>4,d=ref[i]-v+128;if(d<0||d>255)continue;hist[b][d]++;cnt[b]++}
+    const med=new Float32Array(B),ok=[];
+    for(let b=0;b<B;b++){if(cnt[b]<40)continue;let h=cnt[b]/2,a=0,k=0;for(;k<256;k++){a+=hist[b][k];if(a>=h)break}med[b]=k-128;ok.push(b)}
+    if(!ok.length)return cur;
+    let mx=0;for(const b of ok)mx=Math.max(mx,Math.abs(med[b]));if(mx<3)return cur;
+    const lut=new Uint8Array(256);
+    for(let v=0;v<256;v++){const x=v/16-0.5;let lo=-1,hi=-1;for(const b of ok){if(b<=x)lo=b;if(b>=x&&hi<0)hi=b}
+      let c;if(lo<0)c=med[hi];else if(hi<0)c=med[lo];else if(hi===lo)c=med[lo];else{const t=(x-lo)/(hi-lo);c=med[lo]*(1-t)+med[hi]*t}
+      lut[v]=Math.max(0,Math.min(255,Math.round(v+c)))}
+    const o=new Uint8Array(N);for(let i=0;i<N;i++)o[i]=lut[cur[i]];return o;
+  }
   function diffMask(a,b,thr){const N=a.length,m=new Uint8Array(N);let c=0;for(let i=0;i<N;i++){if(Math.abs(a[i]-b[i])>thr){m[i]=1;c++}}return{m,c}}
   function dilate(m,W,H){const o=new Uint8Array(m.length);
     for(let y=0;y<H;y++)for(let x=0;x<W;x++){if(!m[y*W+x])continue;
@@ -509,6 +541,10 @@ const Oche=(function(){
     // erwartete Fläche eines ganzen Darts (in Stichproben-Pixeln) -> kleine Wackel-Flecken aussortieren
     const expA=(best.L*FL/LEN*2*best.wB+best.L*(LEN-FL)/LEN*2*best.wF*0.55)/cs;
     if(best.ex<Math.max(10/cs,expA*0.18))return{kind:"none",mask:m,weak:true};
+    // genug NEUE Pixel? Sonst ist es nur ein schon steckender Dart, der wackelt oder angestoßen wurde
+    if(kn){let exN=0;for(const idx of CH){if(kn[idx])continue;const dx=idx%W+0.5-best.p0[0],dy=((idx/W)|0)+0.5-best.p0[1],a=dx*best.nx+dy*best.ny;
+        if(a<-2||a>best.L+3)continue;const d=Math.abs(-dx*best.ny+dy*best.nx);if(d<=(a<best.L*FL/LEN?best.wB:best.wF))exN++}
+      if(exN<Math.max(10/cs,expA*(o.minNew==null?0.15:o.minNew)))return{kind:"none",mask:m,old:true}}
     // Spitze: unter den fast gleich guten Kandidaten auf derselben Linie der, der am weitesten zur Scheibe hin liegt
     let tip=best.cd,amin=0;
     for(const r of res){if(r.s<best.s*0.94)break;
@@ -522,7 +558,7 @@ const Oche=(function(){
     const px=[];
     for(let i=0;i<N;i++){if(!m[i])continue;const dx=i%W+0.5-best.p0[0],dy=((i/W)|0)+0.5-best.p0[1],a=dx*best.nx+dy*best.ny;
       if(a<-4||a>best.L+6)continue;const d=Math.abs(-dx*best.ny+dy*best.nx);if(d<=(a<best.L*FL/LEN?best.wB:best.wF)+3)px.push(i)}
-    return{kind:"darts",darts:[{x:tip[0]/W,y:tip[1]/H}],mask:m,px,sc:best.ex,changed:c};
+    return{kind:"darts",darts:[{x:tip[0]/W,y:tip[1]/H}],mask:m,px,sc:best.ex,changed:c,line:{x:best.p0[0],y:best.p0[1],nx:best.nx,ny:best.ny,L:best.L}};
   }
   // Sind die Darts gezogen? Im Bereich der bekannten Darts sieht die Scheibe wieder aus wie leer.
   function pulled(cur,empty,known,thr){
@@ -638,7 +674,7 @@ const Oche=(function(){
     return best&&best.q>=0.3?best:null;
   }
   const SECT_ORDER=SECT;
-  return{checkout,scoreMM,homog,apply,toGray,diffMask,analyze,findTip,components,dilate,pose,estF,outDir,detectDart,pulled,autoCal,classify,SECT_ORDER,CAL_MM,CAL_NAMES,R};
+  return{checkout,scoreMM,homog,apply,toGray,matchTo,diffMask,analyze,findTip,components,dilate,pose,estF,outDir,detectDart,pulled,autoCal,classify,SECT_ORDER,CAL_MM,CAL_NAMES,R};
 })();
 if(typeof module!=="undefined")module.exports=Oche;
 
@@ -973,18 +1009,19 @@ function tick(){
     if(g.visit.length>0){cam.waitPull=false;cam.lastKey=key} // per „Zurück“ wieder in die Aufnahme zurück
     else{
       let kn=0;for(let i=0;i<N;i++)if(cam.known[i])kn++;
-      const de=Oche.diffMask(gray,cam.empty,cam.thr).c;
-      const gone=Oche.pulled(gray,cam.empty,cam.known,cam.thr)&&(kn>0||de<N*0.003);
+      const ge=Oche.matchTo(gray,cam.empty),de=Oche.diffMask(ge,cam.empty,cam.thr).c;
+      const gone=Oche.pulled(ge,cam.empty,cam.known,cam.thr)&&(kn>0||de<N*0.003);
       if(gone){resetRound(gray);status("Darts gezogen. Bereit – "+curName()+" wirft!","ready")}
       else status("Aufnahme vorbei – bitte Darts ziehen. Danach ist "+curName()+" dran.","move");
       return}
   }
   evaluate(gray);
 }
-function evaluate(gray){
-  const W=cam.W,H=cam.H;
+function evaluate(gray0){
+  const W=cam.W,H=cam.H,gray=Oche.matchTo(gray0,cam.ref),refBefore=cam.ref;
   const res=Oche.detectDart(gray,cam.ref,cam.empty,W,H,cam.thr,{toMMpx:(x,y)=>toMM(x/W,y/H),P:boardPose(),known:cam.known});
   cam.mask=res.mask;
+  rememberEval(res,refBefore,gray);
   if(res.kind==="big"){
     cam.bigCount++;
     if(cam.bigCount>=3){cam.ref=gray;cam.bigCount=0;status("Bild hat sich stark verändert (Licht?). Neu übernommen – weiter geht’s.","ready")}
@@ -1006,6 +1043,54 @@ function evaluate(gray){
   cam.ref=gray;
 }
 function sizeView2(){}
+
+/* Fehlerbild: die letzten Auswertungen als ein Bild, damit man Fehler nachvollziehen kann */
+cam.hist=[];
+function rememberEval(res,ref,cur){
+  try{
+    let c=0;if(res.mask)for(let i=0;i<res.mask.length;i++)c+=res.mask[i];
+    if(res.kind==="none"&&c<40)return;
+    const rgba=pctx.getImageData(0,0,cam.W,cam.H);
+    let lab=res.kind==="darts"?"":res.kind==="big"?"zu viel verändert":res.old?"nur alter Dart":res.weak?"zu schwach":"nichts erkannt";
+    if(res.kind==="darts"){const d=res.darts[0],[x,y]=toMM(d.x,d.y);lab=Oche.scoreMM(x,y).l+" ("+Math.round(x)+","+Math.round(y)+" mm)"}
+    cam.hist.push({rgba,ref,cur,mask:res.mask,res,lab,t:new Date().toLocaleTimeString(),visit:g.visit.length});
+    if(cam.hist.length>6)cam.hist.shift();
+  }catch(e){}
+}
+function grayImg(ctx,gr,W,H,ox,oy,dim){const id=ctx.createImageData(W,H);for(let i=0;i<W*H;i++){const v=gr[i]*(dim||1);id.data[i*4]=id.data[i*4+1]=id.data[i*4+2]=v;id.data[i*4+3]=255}ctx.putImageData(id,ox,oy)}
+function gridOn(ctx,ox,oy,W,H){
+  if(!cam.Hmm2img)return;const R=Oche.R,P=(x,y)=>{const[a,b]=Oche.apply(cam.Hmm2img,x,y);return[ox+a*W,oy+b*H]};
+  ctx.strokeStyle="rgba(67,230,126,.8)";ctx.lineWidth=1;
+  for(const r of [R.outerBull,R.tIn,R.tOut,R.dIn,R.dOut]){ctx.beginPath();for(let a=0;a<=72;a++){const t=a/72*Math.PI*2,[x,y]=P(r*Math.sin(t),r*Math.cos(t));a?ctx.lineTo(x,y):ctx.moveTo(x,y)}ctx.stroke()}
+  for(let k=0;k<20;k++){const t=(k*18+9)*Math.PI/180;ctx.beginPath();ctx.moveTo(...P(R.outerBull*Math.sin(t),R.outerBull*Math.cos(t)));ctx.lineTo(...P(R.dOut*Math.sin(t),R.dOut*Math.cos(t)));ctx.stroke()}
+  ctx.font="bold 11px sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";
+  for(let k=0;k<20;k++){const t=k*18*Math.PI/180,[x,y]=P(190*Math.sin(t),190*Math.cos(t));ctx.fillStyle=k===0?"#FFD23F":"#fff";ctx.fillText(String(Oche.SECT_ORDER[k]),x,y)}
+  ctx.textAlign="start";ctx.textBaseline="alphabetic";
+}
+function makeSnap(){
+  const W=cam.W,H=cam.H,rows=cam.hist.length+1,FH=40,cv=document.createElement("canvas");cv.width=W*3;cv.height=H*rows+FH;
+  const x=cv.getContext("2d");x.fillStyle="#000";x.fillRect(0,0,cv.width,cv.height);
+  // Zeile 0: jetzt (Farbe + Raster), leere Scheibe, Info
+  if(cam.stream){const[sx,sy,sw,sh]=srcRect();x.drawImage(cam.video,sx,sy,sw,sh,0,0,W,H);gridOn(x,0,0,W,H)}
+  if(cam.empty&&cam.empty.length===W*H){grayImg(x,cam.empty,W,H,W,0);gridOn(x,W,0,W,H)}
+  x.fillStyle="#fff";x.font="bold 14px sans-serif";
+  const P=boardPose(),info=["JETZT (links) / LEERE SCHEIBE (Mitte)","Zoom "+cam.z.toFixed(2)+"  Empf. "+cam.thr+"  Bild "+W+"x"+H,"Kal: "+(cam.cal?cam.cal.map(p=>p.map(v=>v.toFixed(3)).join("/")).join(" "):"-"),"Pose: "+(P?"ok":"keine")+"  Auto: "+(cam.auto?"ja":"nein")+" rot "+cam.rotK,"Spiel: "+curName()+", Dart "+(g.visit.length+1)+" der Aufnahme","Marker: "+cam.markers.map(m=>m.l).join(", ")];
+  info.forEach((t,i)=>{x.font=(i?"":"bold ")+"13px sans-serif";x.fillText(t,W*2+8,20+i*20)});
+  cam.hist.forEach((h,k)=>{const oy=H*(k+1);
+    if(h.ref&&h.ref.length===W*H)grayImg(x,h.ref,W,H,0,oy);
+    x.putImageData(h.rgba,W,oy);gridOn(x,W,oy,W,H);
+    if(h.cur&&h.cur.length===W*H)grayImg(x,h.cur,W,H,W*2,oy,0.45);
+    if(h.mask){const id=x.getImageData(W*2,oy,W,H);for(let i=0;i<h.mask.length;i++)if(h.mask[i]){id.data[i*4]=255;id.data[i*4+1]=40;id.data[i*4+2]=40}x.putImageData(id,W*2,oy)}
+    const r=h.res;if(r.line){x.strokeStyle="#FFD23F";x.lineWidth=2;x.beginPath();x.moveTo(W*2+r.line.x,oy+r.line.y);x.lineTo(W*2+r.line.x+r.line.nx*r.line.L,oy+r.line.y+r.line.ny*r.line.L);x.stroke()}
+    if(r.kind==="darts"){const d=r.darts[0];for(const ox of [W,W*2]){x.strokeStyle="#FFD23F";x.lineWidth=2;x.beginPath();x.arc(ox+d.x*W,oy+d.y*H,6,0,7);x.stroke()}}
+    x.fillStyle="rgba(0,0,0,.7)";x.fillRect(W,oy,W,22);x.fillStyle="#FFD23F";x.font="bold 14px sans-serif";x.fillText(h.t+"  Dart "+(h.visit+(r.kind==="darts"?0:1))+": "+h.lab,W+6,oy+16);
+    x.strokeStyle="#333";x.lineWidth=1;x.strokeRect(0,oy,W*3,H)});
+  x.fillStyle="#aaa";x.font="12px sans-serif";x.fillText("Oche Zähler Fehlerbild "+new Date().toLocaleString()+"  ·  Zeilen: je eine Auswertung (vorher | nachher + Raster | Veränderung + vermuteter Dart)",8,H*rows+24);
+  return cv.toDataURL("image/jpeg",0.82);
+}
+function showSnap(url){$("snapImg").src=url;$("snapSave").href=url;$("snapSheet").hidden=false}
+$("snapClose").onclick=()=>{$("snapSheet").hidden=true};
+$("camSnap").onclick=()=>{if(!cam.stream){status("Kamera ist aus.","");return}showSnap(makeSnap())};
 
 /* Automatische Kalibrierung: läuft im Kalibrier-Modus etwa 2x pro Sekunde */
 function runAuto(){
@@ -1176,6 +1261,7 @@ const camCmd=c=>net.send({a:"cam",c});
 $("liveCal").onclick=()=>camCmd("cal");$("liveRecal").onclick=()=>camCmd("cal");
 $("liveOk").onclick=()=>camCmd("ok");$("liveRot").onclick=()=>camCmd("rot");
 $("liveEmpty").onclick=()=>camCmd("empty");
+$("liveSnap").onclick=()=>{camCmd("snap");toast={t:"info",m:"Fehlerbild wird geholt …"};render()};
 $("liveZin").onclick=()=>camCmd("zin");$("liveZout").onclick=()=>camCmd("zout");
 liveUI();
 
@@ -1210,7 +1296,7 @@ function startHost(code){
   peer.on("open",()=>{hostStatus()});
   peer.on("connection",c=>{
     c.on("open",()=>{conns.push(c);hostStatus();try{c.send(stateMsg())}catch(e){}if(cam.stream)callOne(c.peer)});
-    c.on("data",d=>hostAct(d));
+    c.on("data",d=>{if(d&&d.t==="act"&&d.a==="cam"&&d.c==="snap"){try{c.send({t:"snap",url:cam.stream?makeSnap():null})}catch(e){}return}hostAct(d)});
     c.on("close",()=>{conns=conns.filter(x=>x!==c);hostStatus()});
     c.on("error",()=>{});
   });
@@ -1259,7 +1345,8 @@ function connectHost(){
   if(peer.disconnected){try{peer.reconnect()}catch(e){}scheduleRetry();return}
   const c=peer.connect(PREFIX+joinCode,{reliable:true});hostConn=c;
   c.on("open",()=>{role="guest";pendingCo=null;tIn="";$("guestTitle").textContent="Gekoppelt mit Code "+joinCode;$("guestState").textContent="Du siehst jetzt das Spiel vom Kamera-Handy.";chip("Gekoppelt","ready");setTimeout(()=>{if(!$("netSheet").hidden)$("netSheet").hidden=true},900)});
-  c.on("data",d=>{if(d&&d.t==="state"&&d.g&&d.cfg){g=d.g;cfg=d.cfg;toast=d.toast||null;if(d.cam)rc=d.cam;render();liveUI()}});
+  c.on("data",d=>{if(d&&d.t==="snap"){if(d.url)showSnap(d.url);else{toast={t:"bust",m:"Kamera am Kamera-Handy ist aus."};render()}return}
+    if(d&&d.t==="state"&&d.g&&d.cfg){g=d.g;cfg=d.cfg;toast=d.toast||null;if(d.cam)rc=d.cam;render();liveUI()}});
   c.on("close",()=>{if(hostConn===c){hostConn=null;if(joinCode){chip("Getrennt","hit");$("guestTitle").textContent="Verbindung verloren";$("guestState").textContent="Ich verbinde automatisch neu …";scheduleRetry()}}});
   c.on("error",()=>{});
 }
