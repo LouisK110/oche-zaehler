@@ -560,6 +560,28 @@ const Oche=(function(){
       if(a<-4||a>best.L+6)continue;const d=Math.abs(-dx*best.ny+dy*best.nx);if(d<=(a<best.L*FL/LEN?best.wB:best.wF)+3)px.push(i)}
     return{kind:"darts",darts:[{x:tip[0]/W,y:tip[1]/H}],mask:m,px,sc:best.ex,changed:c,line:{x:best.p0[0],y:best.p0[1],nx:best.nx,ny:best.ny,L:best.L}};
   }
+  // Feinausrichtung: Drehung der Scheibe an den Kanten zwischen den Feldern (Drähte, schwarz/weiß) nachjustieren.
+  // H: mm -> Pixel. Liefert die Drehung in Grad, um die das Raster gedreht werden muss.
+  function refineRot(gray,W,H,Hm){
+    const smp=(x,y)=>{if(!(x>=0&&y>=0&&x<W-1&&y<H-1))return -1;const xi=x|0,yi=y|0,fx=x-xi,fy=y-yi,i=yi*W+xi;
+      return (gray[i]*(1-fx)+gray[i+1]*fx)*(1-fy)+(gray[i+W]*(1-fx)+gray[i+W+1]*fx)*fy};
+    const RS=[];for(let r=22;r<=94;r+=4)RS.push(r);for(let r=111;r<=159;r+=4)RS.push(r);
+    const D2R=Math.PI/180;
+    const score=d=>{let s=0,n=0;
+      for(let k=0;k<20;k++){const t=(k*18+9+d)*D2R;
+        for(const r of RS){const e=Math.max(0.6,1.4/r)/D2R*D2R; // ca. 1,4 mm zu beiden Seiten
+          const a=t-1.4/r,b=t+1.4/r,[x1,y1]=apply(Hm,r*Math.sin(a),r*Math.cos(a)),[x2,y2]=apply(Hm,r*Math.sin(b),r*Math.cos(b));
+          const v1=smp(x1,y1),v2=smp(x2,y2);if(v1<0||v2<0)continue;s+=Math.abs(v1-v2);n++}}
+      return n>100?s/n:0};
+    let best=0,bs=-1;const sc={};
+    for(let d=-8;d<=8.001;d+=0.25){const v=score(d);sc[d.toFixed(2)]=v;if(v>bs){bs=v;best=d}}
+    // fein
+    for(let d=best-0.25;d<=best+0.25;d+=0.05){const v=score(d);if(v>bs){bs=v;best=d}}
+    const s0=score(0);let mean=0,c=0;for(const k in sc){mean+=sc[k];c++}mean/=c;
+    return{deg:best,gain:s0>0?bs/s0:0,contrast:mean>0?bs/mean:0};
+  }
+  // mm-Punkt um d Grad (im Uhrzeigersinn) drehen
+  function rotMM(p,d){const c=Math.cos(d*Math.PI/180),s=Math.sin(d*Math.PI/180);return[p[0]*c+p[1]*s,-p[0]*s+p[1]*c]}
   // Sind die Darts gezogen? Im Bereich der bekannten Darts sieht die Scheibe wieder aus wie leer.
   function pulled(cur,empty,known,thr){
     let n=0,ch=0;for(let i=0;i<known.length;i++)if(known[i]){n++;if(Math.abs(cur[i]-empty[i])>thr)ch++}
@@ -674,7 +696,7 @@ const Oche=(function(){
     return best&&best.q>=0.3?best:null;
   }
   const SECT_ORDER=SECT;
-  return{checkout,scoreMM,homog,apply,toGray,matchTo,diffMask,analyze,findTip,components,dilate,pose,estF,outDir,detectDart,pulled,autoCal,classify,SECT_ORDER,CAL_MM,CAL_NAMES,R};
+  return{checkout,scoreMM,homog,apply,toGray,matchTo,refineRot,rotMM,diffMask,analyze,findTip,components,dilate,pose,estF,outDir,detectDart,pulled,autoCal,classify,SECT_ORDER,CAL_MM,CAL_NAMES,R};
 })();
 if(typeof module!=="undefined")module.exports=Oche;
 
@@ -771,7 +793,7 @@ function undoState(){
   if(role==="guest"){net.send({a:"undo"});return}
   const s=undo.pop();if(!s)return;
   const o=JSON.parse(s);g=o.g;toast=o.toast;save();render();
-  if(mode==="cam"&&cam.markers.length)cam.markers.pop();
+  if(mode==="cam"&&cam.markers.length){const m=cam.markers.pop();cam.lastUndone=m&&m.auto?{mm:m.mm,t:Date.now()}:null}
 }
 
 function avg(p){return p.darts?(p.pts/p.darts*3).toFixed(1):"–"}
@@ -888,7 +910,10 @@ const cam={stream:null,video:document.createElement("video"),proc:document.creat
   markers:[],thr:28,showDiff:false,mask:null,cal:null,H2mm:null,Hmm2img:null,manual:false,
   calMode:false,auto:true,rotK:0,autoHits:0,lastAuto:0,checkSaved:false,
   drag:-1,dragOff:[0,0],down:null,pinch:null,z:1,px:0.5,py:0.5,msg:"Kamera aus",kind:"",starting:false,
-  known:null,waitPull:false,bigCount:0,lastKey:null,P:null,Pkey:""};
+  known:null,waitPull:false,bigCount:0,lastKey:null,P:null,Pkey:"",
+  roi:{x:0,y:0,w:1,h:1},hw:{ok:false,min:1,max:1,cur:1,want:1,busy:false,t:null},locked:false,lockInfo:"",
+  needRefine:false,refineInfo:"",corr:[],lastUndone:null};
+try{const c=JSON.parse(localStorage.getItem("oche-corr")||"[]");if(Array.isArray(c))cam.corr=c.slice(-10)}catch(e){}
 cam.video.playsInline=true;cam.video.muted=true;cam.video.setAttribute("playsinline","");
 const view=$("view"),vctx=view.getContext("2d");
 const pctx=cam.proc.getContext("2d",{willReadFrequently:true});
@@ -914,6 +939,50 @@ function status(t,kind){if(t===cam.msg&&(kind||"")===cam.kind)return;cam.msg=t;c
 
 /* Zoom: Ausschnitt des Kamerabilds (z = Vergrößerung, px/py = Mitte des Ausschnitts) */
 function crop(){const w=1/cam.z;return{x:Math.min(1-w,Math.max(0,cam.px-w/2)),y:Math.min(1-w,Math.max(0,cam.py-w/2)),w}}
+// Verarbeitungs-Pixel <-> Ausschnitt-Koordinaten (0..1). Ausgewertet wird nur der Bereich um die Scheibe (ROI), dafür in hoher Auflösung.
+function p2n(x,y){const r=cam.roi;return[r.x+x/cam.W*r.w,r.y+y/cam.H*r.h]}
+function n2p(x,y){const r=cam.roi;return[(x-r.x)/r.w*cam.W,(y-r.y)/r.h*cam.H]}
+function setRoi(r){
+  if(!cam.stream)return;
+  const vw=cam.video.videoWidth,vh=cam.video.videoHeight,[,,sw,sh]=srcRect();
+  // Größe in echten Kamerapixeln -> nicht mehr rechnen, als die Kamera liefert
+  const pw=r.w*sw,ph=r.h*sh,full=r.w>=0.999&&r.h>=0.999;
+  const lim=full?480:Math.max(320,Math.min(720,Math.max(pw,ph)));
+  const k=lim/Math.max(pw,ph),W=Math.max(16,Math.round(pw*k)),H=Math.max(16,Math.round(ph*k));
+  cam.roi=r;
+  if(W!==cam.W||H!==cam.H){cam.W=W;cam.H=H;cam.proc.width=W;cam.proc.height=H;maskCanvas.width=W;maskCanvas.height=H}
+  cam.ref=null;cam.empty=null;cam.prev=null;cam.stable=0;cam.evaluated=false;cam.mask=null;cam.known=null;cam.waitPull=false;cam.Pkey="";cam.hist=[];
+}
+function boardRoi(){
+  if(!cam.Hmm2img)return{x:0,y:0,w:1,h:1};
+  let x0=1,y0=1,x1=0,y1=0;
+  for(let a=0;a<36;a++){const t=a/36*2*Math.PI,[x,y]=Oche.apply(cam.Hmm2img,250*Math.sin(t),250*Math.cos(t));x0=Math.min(x0,x);y0=Math.min(y0,y);x1=Math.max(x1,x);y1=Math.max(y1,y)}
+  const mx=(x1-x0)*0.06,my=(y1-y0)*0.06;x0=Math.max(0,x0-mx);y0=Math.max(0,y0-my);x1=Math.min(1,x1+mx);y1=Math.min(1,y1+my);
+  if(!(x1-x0>0.05&&y1-y0>0.05))return{x:0,y:0,w:1,h:1};
+  return{x:x0,y:y0,w:x1-x0,h:y1-y0};
+}
+function useBoardRoi(){if(cam.stream)setRoi(cam.calMode?{x:0,y:0,w:1,h:1}:boardRoi())}
+// Echter Kamera-Zoom (falls das Handy ihn anbietet): Mehr Sensor-Pixel statt nur Ausschnitt vergrößern.
+function camTrack(){return cam.stream?cam.stream.getVideoTracks()[0]:null}
+function hwWanted(){
+  if(!cam.hw.ok)return 1;const c=crop();
+  const dev=Math.max(0.5-c.x,c.x+c.w-0.5,0.5-c.y,c.y+c.w-0.5,0.02);
+  let z=Math.min(cam.hw.max,1/(2*dev));z=Math.max(cam.hw.min,Math.floor(z*10)/10);return Math.max(1,z);
+}
+function hwSchedule(){
+  if(!cam.hw.ok)return;clearTimeout(cam.hw.t);
+  cam.hw.t=setTimeout(async()=>{
+    const z=hwWanted();if(Math.abs(z-cam.hw.cur)<0.05||cam.hw.busy)return;
+    const tr=camTrack();if(!tr)return;cam.hw.busy=true;
+    try{await tr.applyConstraints({advanced:[{zoom:z}]});
+      await new Promise(r=>setTimeout(r,400));
+      const st=tr.getSettings();cam.hw.cur=st.zoom||z}catch(e){cam.hw.ok=false;cam.hw.cur=1}
+    cam.hw.busy=false;
+    // Bild hat sich geändert -> Kalibrierung prüfen lassen (die App sucht die Scheibe neu und übernimmt, wenn es passt)
+    if(cam.cal&&cam.cal.length===4&&!cam.manual){if(!cam.calMode){cam.checkSaved=true;cam.rotK=0;beginCal(true)}else{cam.autoHits=0}}
+    else{useBoardRoi();if(cam.cal&&cam.cal.length===4&&!cam.calMode)status("Kamera-Zoom geändert. Prüfe, ob die grünen Linien noch auf der Scheibe liegen.","move")}
+  },700);
+}
 function zoomUI(){$("zoom").value=cam.z;$("zoomV").textContent=cam.z.toFixed(1).replace(".",",")+"×";camNotify()}
 function setZoom(z,px,py){
   const o=crop();
@@ -928,7 +997,7 @@ function setZoom(z,px,py){
   cam.ref=null;cam.empty=null;cam.prev=null;cam.stable=0;cam.evaluated=false;cam.mask=null;cam.autoHits=0;cam.known=null;cam.waitPull=false;
   try{localStorage.setItem(ZKEY,JSON.stringify({z:cam.z,px:cam.px,py:cam.py}))}catch(e){}
   if(cam.cal&&cam.cal.length===4&&!cam.calMode)saveCal();
-  zoomUI();
+  zoomUI();useBoardRoi();hwSchedule();
   if(cam.stream&&!cam.calMode)status("Zoom geändert. Scheibe leer lassen, gleich bereit …","move");
 }
 
@@ -938,7 +1007,9 @@ async function startCam(){
     $("camOffMsg").textContent="Dieser Browser gibt die Kamera hier nicht frei. Öffne die Seite über deinen https-Link (GitHub Pages) in Chrome oder Safari.";status("Kamera nicht verfügbar","hit");return}
   cam.starting=true;
   try{
-    cam.stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}}});
+    const v={facingMode:{ideal:"environment"},width:{ideal:3840},height:{ideal:2160}};
+    try{cam.stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{...v,zoom:true}})}
+    catch(e){if(e&&e.name==="NotAllowedError")throw e;cam.stream=await navigator.mediaDevices.getUserMedia({audio:false,video:v})}
   }catch(e){
     cam.starting=false;
     $("camOffMsg").textContent=e&&e.name==="NotAllowedError"?"Kamera-Zugriff wurde abgelehnt. Erlaube die Kamera in den Browser-Einstellungen für diese Seite und lade neu.":"Kamera konnte nicht gestartet werden ("+(e&&e.name||"Fehler")+").";
@@ -948,13 +1019,20 @@ async function startCam(){
   cam.starting=false;
   const vw=cam.video.videoWidth,vh=cam.video.videoHeight,s=Math.min(1,960/Math.max(vw,vh));
   view.width=Math.round(vw*s);view.height=Math.round(vh*s);
-  const sp=480/Math.max(vw,vh);cam.W=Math.round(vw*sp);cam.H=Math.round(vh*sp);
-  cam.proc.width=cam.W;cam.proc.height=cam.H;maskCanvas.width=cam.W;maskCanvas.height=cam.H;
+  cam.locked=false;cam.lockInfo="";
+  cam.hw={ok:false,min:1,max:1,cur:1,want:1,busy:false,t:null};
+  try{const tr=camTrack(),cp=tr.getCapabilities?tr.getCapabilities():{};
+    if(cp.zoom&&cp.zoom.max>1){cam.hw.ok=true;cam.hw.min=cp.zoom.min||1;cam.hw.max=cp.zoom.max;
+      const st=tr.getSettings();cam.hw.cur=st.zoom||1;
+      if(Math.abs(cam.hw.cur-1)>0.01){await tr.applyConstraints({advanced:[{zoom:Math.max(cam.hw.min,1)}]}).catch(()=>{});cam.hw.cur=tr.getSettings().zoom||1}}}catch(e){cam.hw.ok=false}
+  cam.roi={x:0,y:0,w:1,h:1};cam.W=0;setRoi(cam.roi);
   const sa=560/Math.max(vw,vh);acv.width=Math.round(vw*sa);acv.height=Math.round(vh*sa);
   cam.ref=null;cam.empty=null;cam.prev=null;cam.stable=0;cam.markers=[];
   $("camOff").hidden=true;zoomUI();
   if(cam.cal&&cam.cal.length===4&&cam.manual){calUI();status("Kalibrierung von Hand geladen. Handy bewegt? Dann „Kalibrieren“. Sonst Scheibe leer lassen, gleich bereit …","move")}
   else{cam.checkSaved=!!(cam.cal&&cam.cal.length===4);cam.rotK=0;beginCal(true)}
+  if(!cam.calMode)useBoardRoi();
+  hwSchedule();
   cam.timer=setInterval(tick,120);
   setTimeout(()=>netCallAll(),300);
   const loop=()=>{draw();cam.raf=requestAnimationFrame(loop)};loop();
@@ -969,24 +1047,26 @@ function stopCam(){
 function sizeView(){}
 
 /* Bildverarbeitung, ca. 8x pro Sekunde */
-function srcRect(){const c=crop(),vw=cam.video.videoWidth,vh=cam.video.videoHeight;return[c.x*vw,c.y*vh,c.w*vw,c.w*vh]}
-function grab(){const[sx,sy,sw,sh]=srcRect();pctx.drawImage(cam.video,sx,sy,sw,sh,0,0,cam.W,cam.H);return Oche.toGray(pctx.getImageData(0,0,cam.W,cam.H).data,cam.W*cam.H)}
+function srcRect(){const c=crop(),vw=cam.video.videoWidth,vh=cam.video.videoHeight,Z=cam.hw.cur||1,o=0.5-0.5/Z;
+  return[(c.x-o)*Z*vw,(c.y-o)*Z*vh,c.w*Z*vw,c.w*Z*vh]}
+function roiRect(){const[sx,sy,sw,sh]=srcRect(),r=cam.roi;return[sx+r.x*sw,sy+r.y*sh,r.w*sw,r.h*sh]}
+function grab(){const[sx,sy,sw,sh]=roiRect();pctx.drawImage(cam.video,sx,sy,sw,sh,0,0,cam.W,cam.H);return Oche.toGray(pctx.getImageData(0,0,cam.W,cam.H).data,cam.W*cam.H)}
 function gameKey(){return g.turn+"/"+g.legNo+"/"+g.winner}
 function curName(){return g.winner===null?g.players[g.turn].name:""}
 function resetRound(gray){cam.known=new Uint8Array(cam.W*cam.H);cam.markers=[];cam.waitPull=false;cam.bigCount=0;cam.lastKey=gameKey();if(gray){cam.ref=gray;cam.empty=gray}}
 function boardPose(){ // Lage der Scheibe im Raum (für die Dart-Richtung), wird bei neuer Kalibrierung/Zoom neu berechnet
   if(!cam.cal||cam.cal.length!==4)return null;
-  const key=JSON.stringify(cam.cal)+"|"+cam.z+"|"+cam.px+"|"+cam.py+"|"+cam.W;
+  const key=JSON.stringify(cam.cal)+"|"+cam.z+"|"+cam.px+"|"+cam.py+"|"+cam.W+"|"+JSON.stringify(cam.roi)+"|"+cam.hw.cur;
   if(key===cam.Pkey)return cam.P;
-  const Hpix=Oche.homog(Oche.CAL_MM,cam.cal.map(p=>[p[0]*cam.W,p[1]*cam.H]));
-  const c=crop(),cx=(0.5-c.x)/c.w*cam.W,cy=(0.5-c.y)/c.w*cam.H,fb=0.8*Math.max(cam.W,cam.H)*cam.z;
+  const Hpix=Oche.homog(Oche.CAL_MM,cam.cal.map(p=>n2p(p[0],p[1])));
+  const c=crop(),[cx,cy]=n2p((0.5-c.x)/c.w,(0.5-c.y)/c.w),[,,rw]=roiRect(),fb=0.8*Math.max(cam.video.videoWidth,cam.video.videoHeight)*(cam.hw.cur||1)*cam.W/rw;
   const fe=Hpix?Oche.estF(Hpix,cx,cy,fb):{f:fb};
   cam.P=Hpix?Oche.pose(Hpix,fe.f,cx,cy):null;cam.Pkey=key;return cam.P;
 }
 function tick(){
   if(!cam.stream||cam.video.readyState<2)return;
   const gray=grab(),N=cam.W*cam.H;
-  if(!cam.prev){cam.prev=gray;return}
+  if(!cam.prev||cam.prev.length!==gray.length){cam.prev=gray;return}
   const mot=Oche.diffMask(gray,cam.prev,cam.thr).c/N;cam.prev=gray;
   if(cam.calMode){
     if(mot>0.004){cam.autoHits=0;return}
@@ -998,7 +1078,9 @@ function tick(){
   if(cam.stable<4||cam.evaluated)return;
   cam.evaluated=true;
   if(!cam.H2mm){status("Bitte zuerst kalibrieren.","");return}
-  if(!cam.ref||!cam.known||cam.known.length!==N){resetRound(gray);status("Bereit – "+curName()+" wirft!","ready");return}
+  if(!cam.ref||!cam.known||cam.known.length!==N){
+    if(cam.needRefine){cam.needRefine=false;if(refineCal(gray)){cam.evaluated=false;cam.stable=0;return}}
+    resetRound(gray);lockCam();status("Bereit – "+curName()+" wirft!"+(cam.refineInfo?" ("+cam.refineInfo+")":""),"ready");cam.refineInfo="";return}
   // Aufnahme vorbei (Spielerwechsel, Leg vorbei)? Dann erst warten, bis die Darts gezogen sind.
   const key=gameKey();
   if(!cam.waitPull&&key!==cam.lastKey){
@@ -1019,7 +1101,7 @@ function tick(){
 }
 function evaluate(gray0){
   const W=cam.W,H=cam.H,gray=Oche.matchTo(gray0,cam.ref),refBefore=cam.ref;
-  const res=Oche.detectDart(gray,cam.ref,cam.empty,W,H,cam.thr,{toMMpx:(x,y)=>toMM(x/W,y/H),P:boardPose(),known:cam.known});
+  const res=Oche.detectDart(gray,cam.ref,cam.empty,W,H,cam.thr,{toMMpx:(x,y)=>toMM(...p2n(x,y)),P:boardPose(),known:cam.known,walk:pxScale(4,2,12)});
   cam.mask=res.mask;
   rememberEval(res,refBefore,gray);
   if(res.kind==="big"){
@@ -1029,11 +1111,11 @@ function evaluate(gray0){
     return}
   cam.bigCount=0;
   if(res.kind==="darts"&&g.winner===null&&pendingCo===null&&g.visit.length<3){
-    const d=res.darts[0],[x,y]=toMM(d.x,d.y),s=Oche.scoreMM(x,y);
+    const d0=res.darts[0],[nx,ny]=p2n(d0.x*W,d0.y*H),[rx,ry]=toMM(nx,ny),b=bias(),x=rx+b[0],y=ry+b[1],s=Oche.scoreMM(x,y),d={x:nx,y:ny};
     // Dart-Pixel merken, damit Wackeln/Schatten dieses Darts nicht nochmal zählen
-    let km=new Uint8Array(W*H);for(const p of res.px||[])km[p]=1;for(let k=0;k<4;k++)km=Oche.dilate(km,W,H);
+    let km=new Uint8Array(W*H);for(const p of res.px||[])km[p]=1;for(let k=0,n=pxScale(4,2,10);k<n;k++)km=Oche.dilate(km,W,H);
     for(let i=0;i<km.length;i++)if(km[i])cam.known[i]=1;
-    cam.markers.push({x:d.x,y:d.y,l:s.l});if(cam.markers.length>9)cam.markers.shift();
+    cam.markers.push({x:d.x,y:d.y,l:s.l,auto:true,mm:[rx,ry]});if(cam.markers.length>9)cam.markers.shift();
     throwDart(s.v,s.l,s.d);
     if(g.visit.length===0)status("Erkannt: "+s.l+". Aufnahme vorbei – bitte Darts ziehen.","hit");
     else status("Erkannt: "+s.l+" (Dart "+g.visit.length+"). Falsch? „Zurück“ und Spitze antippen.","hit");
@@ -1044,6 +1126,45 @@ function evaluate(gray0){
 }
 function sizeView2(){}
 
+/* Pixel pro mm auf der Scheibe -> Pixel-Größen der Erkennung anpassen (abgestimmt auf 0,72 px/mm) */
+function pxScale(base,lo,hi){
+  let k=1;if(cam.cal&&cam.cal.length===4&&cam.Hmm2img){const c=n2p(...Oche.apply(cam.Hmm2img,0,0));let d=0;for(const p of cam.cal){const q=n2p(p[0],p[1]);d+=Math.hypot(q[0]-c[0],q[1]-c[1])}k=d/4/166/0.72}
+  return Math.max(lo,Math.min(hi,Math.round(base*k)));
+}
+/* Gelernte Korrektur aus „Zurück“ + Antippen (Median, höchstens 15 mm) */
+function bias(){
+  const c=cam.corr;if(!c||c.length<2)return[0,0];
+  const med=a=>{const s=[...a].sort((p,q)=>p-q);return s[s.length>>1]};
+  const cl=v=>Math.max(-15,Math.min(15,v));return[cl(med(c.map(p=>p[0]))),cl(med(c.map(p=>p[1])))];
+}
+/* Belichtung, Weißabgleich und Fokus festhalten, solange gespielt wird (sonst regelt das Handy nach, wenn jemand vor der Scheibe steht) */
+async function lockCam(){
+  const tr=camTrack();if(!tr||!tr.getCapabilities||cam.locked)return;cam.locked=true;
+  let cp={},st={};try{cp=tr.getCapabilities();st=tr.getSettings()}catch(e){return}
+  const done=[];
+  const tryC=async(c,name)=>{try{await tr.applyConstraints({advanced:[c]});done.push(name)}catch(e){}};
+  if(cp.exposureMode&&cp.exposureMode.includes("manual")&&st.exposureTime){const c={exposureMode:"manual",exposureTime:st.exposureTime};if(st.iso)c.iso=st.iso;await tryC(c,"Belichtung")}
+  if(cp.whiteBalanceMode&&cp.whiteBalanceMode.includes("manual")&&st.colorTemperature)await tryC({whiteBalanceMode:"manual",colorTemperature:st.colorTemperature},"Farbe");
+  if(cp.focusMode&&cp.focusMode.includes("manual")&&st.focusDistance!=null)await tryC({focusMode:"manual",focusDistance:st.focusDistance},"Fokus");
+  cam.lockInfo=done.join("+")||"nicht möglich";
+}
+async function unlockCam(){
+  const tr=camTrack();if(!tr||!tr.getCapabilities||!cam.locked)return;cam.locked=false;cam.lockInfo="";
+  let cp={};try{cp=tr.getCapabilities()}catch(e){return}
+  for(const[k,v] of [["exposureMode","continuous"],["whiteBalanceMode","continuous"],["focusMode","continuous"]])
+    if(cp[k]&&cp[k].includes(v)){try{await tr.applyConstraints({advanced:[{[k]:v}]})}catch(e){}}
+}
+/* Raster an den Feldkanten nachdrehen (läuft einmal nach jeder Kalibrierung, Scheibe leer) */
+function refineCal(gray){
+  if(!cam.Hmm2img||!cam.cal||cam.cal.length!==4)return false;
+  const Hm=Oche.homog(Oche.CAL_MM,cam.cal.map(p=>n2p(p[0],p[1])));if(!Hm)return false;
+  let r=null;try{r=Oche.refineRot(gray,cam.W,cam.H,Hm)}catch(e){}
+  if(!r||r.contrast<1.5||Math.abs(r.deg)<0.2||Math.abs(r.deg)>8)return false;
+  const H0=cam.Hmm2img,pts=Oche.CAL_MM.map(p=>{const q=Oche.rotMM(p,r.deg);return Oche.apply(H0,q[0],q[1])});
+  setCal(pts);saveCal();cam.refineInfo="Raster um "+Math.abs(r.deg).toFixed(1).replace(".",",")+"° nachjustiert";
+  cam.ref=null;cam.empty=null;cam.Pkey="";return true;
+}
+
 /* Fehlerbild: die letzten Auswertungen als ein Bild, damit man Fehler nachvollziehen kann */
 cam.hist=[];
 function rememberEval(res,ref,cur){
@@ -1052,14 +1173,14 @@ function rememberEval(res,ref,cur){
     if(res.kind==="none"&&c<40)return;
     const rgba=pctx.getImageData(0,0,cam.W,cam.H);
     let lab=res.kind==="darts"?"":res.kind==="big"?"zu viel verändert":res.old?"nur alter Dart":res.weak?"zu schwach":"nichts erkannt";
-    if(res.kind==="darts"){const d=res.darts[0],[x,y]=toMM(d.x,d.y);lab=Oche.scoreMM(x,y).l+" ("+Math.round(x)+","+Math.round(y)+" mm)"}
+    if(res.kind==="darts"){const d=res.darts[0],[x,y]=toMM(...p2n(d.x*cam.W,d.y*cam.H));lab=Oche.scoreMM(x,y).l+" ("+Math.round(x)+","+Math.round(y)+" mm)"}
     cam.hist.push({rgba,ref,cur,mask:res.mask,res,lab,t:new Date().toLocaleTimeString(),visit:g.visit.length});
     if(cam.hist.length>6)cam.hist.shift();
   }catch(e){}
 }
 function grayImg(ctx,gr,W,H,ox,oy,dim){const id=ctx.createImageData(W,H);for(let i=0;i<W*H;i++){const v=gr[i]*(dim||1);id.data[i*4]=id.data[i*4+1]=id.data[i*4+2]=v;id.data[i*4+3]=255}ctx.putImageData(id,ox,oy)}
 function gridOn(ctx,ox,oy,W,H){
-  if(!cam.Hmm2img)return;const R=Oche.R,P=(x,y)=>{const[a,b]=Oche.apply(cam.Hmm2img,x,y);return[ox+a*W,oy+b*H]};
+  if(!cam.Hmm2img)return;const R=Oche.R,P=(x,y)=>{const[a,b]=Oche.apply(cam.Hmm2img,x,y),[u,v]=n2p(a,b);return[ox+u,oy+v]};
   ctx.strokeStyle="rgba(67,230,126,.8)";ctx.lineWidth=1;
   for(const r of [R.outerBull,R.tIn,R.tOut,R.dIn,R.dOut]){ctx.beginPath();for(let a=0;a<=72;a++){const t=a/72*Math.PI*2,[x,y]=P(r*Math.sin(t),r*Math.cos(t));a?ctx.lineTo(x,y):ctx.moveTo(x,y)}ctx.stroke()}
   for(let k=0;k<20;k++){const t=(k*18+9)*Math.PI/180;ctx.beginPath();ctx.moveTo(...P(R.outerBull*Math.sin(t),R.outerBull*Math.cos(t)));ctx.lineTo(...P(R.dOut*Math.sin(t),R.dOut*Math.cos(t)));ctx.stroke()}
@@ -1071,12 +1192,12 @@ function makeSnap(){
   const W=cam.W,H=cam.H,rows=cam.hist.length+1,FH=40,cv=document.createElement("canvas");cv.width=W*3;cv.height=H*rows+FH;
   const x=cv.getContext("2d");x.fillStyle="#000";x.fillRect(0,0,cv.width,cv.height);
   // Zeile 0: jetzt (Farbe + Raster), leere Scheibe, Info
-  if(cam.stream){const[sx,sy,sw,sh]=srcRect();x.drawImage(cam.video,sx,sy,sw,sh,0,0,W,H);gridOn(x,0,0,W,H)}
+  if(cam.stream){const[sx,sy,sw,sh]=roiRect();x.drawImage(cam.video,sx,sy,sw,sh,0,0,W,H);gridOn(x,0,0,W,H)}
   if(cam.empty&&cam.empty.length===W*H){grayImg(x,cam.empty,W,H,W,0);gridOn(x,W,0,W,H)}
   x.fillStyle="#fff";x.font="bold 14px sans-serif";
-  const P=boardPose(),info=["JETZT (links) / LEERE SCHEIBE (Mitte)","Zoom "+cam.z.toFixed(2)+"  Empf. "+cam.thr+"  Bild "+W+"x"+H,"Kal: "+(cam.cal?cam.cal.map(p=>p.map(v=>v.toFixed(3)).join("/")).join(" "):"-"),"Pose: "+(P?"ok":"keine")+"  Auto: "+(cam.auto?"ja":"nein")+" rot "+cam.rotK,"Spiel: "+curName()+", Dart "+(g.visit.length+1)+" der Aufnahme","Marker: "+cam.markers.map(m=>m.l).join(", ")];
+  const P=boardPose(),b=bias(),info=["JETZT (links) / LEERE SCHEIBE (Mitte)","Zoom "+cam.z.toFixed(2)+" (Kamera "+(cam.hw.ok?cam.hw.cur.toFixed(1)+"/"+cam.hw.max:"nein")+")  Empf. "+cam.thr,"Video "+cam.video.videoWidth+"x"+cam.video.videoHeight+"  Rechnen "+W+"x"+H+"  Fest: "+(cam.lockInfo||"-"),"Korrektur "+b[0].toFixed(1)+"/"+b[1].toFixed(1)+" mm ("+cam.corr.length+")","Kal: "+(cam.cal?cam.cal.map(p=>p.map(v=>v.toFixed(3)).join("/")).join(" "):"-"),"Pose: "+(P?"ok":"keine")+"  Auto: "+(cam.auto?"ja":"nein")+" rot "+cam.rotK,"Spiel: "+curName()+", Dart "+(g.visit.length+1)+" der Aufnahme","Marker: "+cam.markers.map(m=>m.l).join(", ")];
   info.forEach((t,i)=>{x.font=(i?"":"bold ")+"13px sans-serif";x.fillText(t,W*2+8,20+i*20)});
-  cam.hist.forEach((h,k)=>{const oy=H*(k+1);
+  cam.hist.forEach((h,k)=>{const oy=H*(k+1);if(h.rgba.width!==W||h.rgba.height!==H)return;
     if(h.ref&&h.ref.length===W*H)grayImg(x,h.ref,W,H,0,oy);
     x.putImageData(h.rgba,W,oy);gridOn(x,W,oy,W,H);
     if(h.cur&&h.cur.length===W*H)grayImg(x,h.cur,W,H,W*2,oy,0.45);
@@ -1086,7 +1207,9 @@ function makeSnap(){
     x.fillStyle="rgba(0,0,0,.7)";x.fillRect(W,oy,W,22);x.fillStyle="#FFD23F";x.font="bold 14px sans-serif";x.fillText(h.t+"  Dart "+(h.visit+(r.kind==="darts"?0:1))+": "+h.lab,W+6,oy+16);
     x.strokeStyle="#333";x.lineWidth=1;x.strokeRect(0,oy,W*3,H)});
   x.fillStyle="#aaa";x.font="12px sans-serif";x.fillText("Oche Zähler Fehlerbild "+new Date().toLocaleString()+"  ·  Zeilen: je eine Auswertung (vorher | nachher + Raster | Veränderung + vermuteter Dart)",8,H*rows+24);
-  return cv.toDataURL("image/jpeg",0.82);
+  const sc=Math.min(1,1260/cv.width);if(sc>=1)return cv.toDataURL("image/jpeg",0.82);
+  const o=document.createElement("canvas");o.width=Math.round(cv.width*sc);o.height=Math.round(cv.height*sc);o.getContext("2d").drawImage(cv,0,0,o.width,o.height);
+  return o.toDataURL("image/jpeg",0.85);
 }
 function showSnap(url){$("snapImg").src=url;$("snapSave").href=url;$("snapSheet").hidden=false}
 $("snapClose").onclick=()=>{$("snapSheet").hidden=true};
@@ -1120,14 +1243,18 @@ function calUI(){
 }
 function beginCal(auto){
   cam.calMode=true;cam.auto=auto;cam.autoHits=0;cam.lastAuto=0;cam.drag=-1;
+  unlockCam();setRoi({x:0,y:0,w:1,h:1});
   if(auto)status("Suche die Scheibe …","move");
   else{setCal(null);cam.cal=[];status(CAL_HELP[0],"move")}
   calUI();
 }
 function finishCal(msg){
   if(!(cam.cal&&cam.cal.length===4))return;
+  const keep=/passt noch/.test(msg||"");
   saveCal();cam.calMode=false;cam.checkSaved=false;
   cam.ref=null;cam.empty=null;cam.stable=0;cam.evaluated=false;cam.markers=[];cam.known=null;cam.waitPull=false;
+  if(!keep){cam.corr=[];try{localStorage.removeItem("oche-corr")}catch(e){}}
+  cam.needRefine=true;useBoardRoi();
   calUI();status((msg||"Kalibriert.")+" Scheibe leer lassen, gleich bereit …","move");
 }
 function emptyBoard(){cam.ref=null;cam.empty=null;cam.markers=[];cam.known=null;cam.waitPull=false;cam.stable=0;cam.evaluated=false;status("Neu: Scheibe leer lassen, gleich bereit …","move")}
@@ -1152,7 +1279,7 @@ function draw(){
   vctx.drawImage(cam.video,sx,sy,sw,sh,0,0,view.width,view.height);
   if(cam.showDiff&&cam.mask&&cam.mask.length===cam.W*cam.H){
     const id=mctx.createImageData(cam.W,cam.H);for(let i=0;i<cam.mask.length;i++)if(cam.mask[i]){id.data[i*4]=255;id.data[i*4+3]=170}
-    mctx.putImageData(id,0,0);vctx.drawImage(maskCanvas,0,0,view.width,view.height);
+    mctx.putImageData(id,0,0);const r=cam.roi;vctx.drawImage(maskCanvas,r.x*view.width,r.y*view.height,r.w*view.width,r.h*view.height);
   }
   const lw=Math.max(1.5,view.width/400);
   if(cam.Hmm2img){
@@ -1224,7 +1351,13 @@ function ptrEnd(e){
   if(!d||d.moved||e.type!=="pointerup"||cam.calMode||!cam.H2mm)return;
   const[x,y]=pos(e);if(Math.hypot(x-d.x,y-d.y)>0.03)return;
   const[mx,my]=toMM(x,y),s=Oche.scoreMM(mx,my);
-  if(throwDart(s.v,s.l,s.d)){cam.markers.push({x,y,l:s.l});status("Von Hand gesetzt: "+s.l,"hit")}
+  if(throwDart(s.v,s.l,s.d)){cam.markers.push({x,y,l:s.l});
+    // Korrektur merken: wo hätte die Spitze sein müssen? Daraus lernt die App eine feste Verschiebung.
+    const u=cam.lastUndone;cam.lastUndone=null;let extra="";
+    if(u&&Date.now()-u.t<90000){const dx=mx-u.mm[0],dy=my-u.mm[1];
+      if(Math.hypot(dx,dy)<35){cam.corr.push([dx,dy]);if(cam.corr.length>10)cam.corr.shift();try{localStorage.setItem("oche-corr",JSON.stringify(cam.corr))}catch(e){}
+        if(cam.corr.length>=2)extra=" – Korrektur gelernt"}}
+    status("Von Hand gesetzt: "+s.l+extra,"hit")}
 }
 view.addEventListener("pointerup",ptrEnd);view.addEventListener("pointercancel",ptrEnd);
 
