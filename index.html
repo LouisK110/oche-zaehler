@@ -72,6 +72,12 @@ button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
 .extra{grid-template-columns:repeat(4,1fr)}
 .num{grid-template-columns:repeat(3,1fr)}
 .camkeys{grid-template-columns:repeat(3,1fr)}
+.amb{display:grid;grid-template-columns:repeat(auto-fit,minmax(70px,1fr));gap:6px;align-items:stretch;background:#fff6d6;border:1px solid #e0b93a;border-radius:9px;padding:8px}
+.amb .q{grid-column:1/-1;font-weight:600;font-size:14px}
+.amb button{background:var(--key);border:1px solid var(--line);border-radius:9px;padding:6px 4px;display:flex;flex-direction:column;align-items:center;gap:1px;color:var(--fg)}
+.amb button b{font-family:var(--f-display);font-size:24px;line-height:1.1}
+.amb button small{font-size:11px;color:var(--muted)}
+.amb button.on{border:2px solid var(--green);background:var(--green-soft)}
 .k{background:var(--key);border:1px solid var(--line);border-radius:9px;height:50px;font-family:var(--f-display);font-weight:600;font-size:22px;font-variant-numeric:tabular-nums}
 .k:active{transform:scale(.97)}
 .k.mod{font-family:var(--f-body);font-size:14px;height:42px}
@@ -149,6 +155,7 @@ button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
   <div class="board" id="board"></div>
   <div class="visit">
     <div class="slots"><div class="slot" id="s0"></div><div class="slot" id="s1"></div><div class="slot" id="s2"></div><div class="sum" id="sum">0</div></div>
+    <div class="amb" id="amb" hidden></div>
     <div class="co" id="co"></div>
   </div>
   <div id="winArea"></div>
@@ -196,8 +203,9 @@ button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
           <button class="k small" id="liveEmpty">Scheibe leer</button>
           <button class="k small" id="liveUndo">Zurück</button>
         </div>
-        <div class="camkeys" style="grid-template-columns:1fr">
-          <button class="k small" id="liveSnap">Fehlerbild holen (für Claude)</button>
+        <div class="camkeys" style="grid-template-columns:1fr 1fr">
+          <button class="k small" id="liveSnap">Fehlerbild holen</button>
+          <button class="k small" id="liveData">Lerndaten holen</button>
         </div>
         <div class="zoomrow">
           <button class="k small" id="liveZout" aria-label="Rauszoomen">−</button>
@@ -248,6 +256,11 @@ button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
           <summary>Einstellungen Erkennung</summary>
           <div class="row"><span>Empfindlichkeit</span><input type="range" id="sens" min="10" max="60" value="28"><span id="sensV">28</span></div>
           <div class="row"><label><input type="checkbox" id="showDiff"> Erkannte Veränderung rot anzeigen</label></div>
+          <div class="camkeys" style="grid-template-columns:1fr 1fr;margin:6px 0">
+            <button class="k small" id="dataSave">Lerndaten speichern</button>
+            <button class="k small" id="dataClear">Lerndaten löschen</button>
+          </div>
+          <p class="hint">Lerndaten: Zu jedem erkannten Dart merkt sich die App ein kleines Bild und ob er korrigiert wurde (höchstens die letzten 40). Die Datei kannst du Claude schicken, damit die Erkennung an deine Scheibe angepasst wird.</p>
           <p class="hint">Zoomen: zwei Finger im Bild auseinanderziehen oder den Regler schieben. Ist gezoomt, verschiebst du den Ausschnitt mit einem Finger. Liegt ein Dart falsch, tippe auf „Zurück“ und dann im Bild genau auf die Dartspitze. Fällt ein Dart von der Scheibe: „Daneben (0)“. Nach jeder Aufnahme wartet die App, bis die Darts gezogen sind. Klappt das nicht, „Scheibe leer“ drücken. Gutes, gleichmäßiges Licht (z. B. ein Ringlicht) ohne harte Schatten verbessert die Erkennung deutlich.</p>
         </details>
       </div>
@@ -706,7 +719,28 @@ const Oche=(function(){
     return best&&best.q>=0.3?best:null;
   }
   const SECT_ORDER=SECT;
-  return{checkout,scoreMM,homog,apply,toGray,matchTo,refineRot,rotMM,diffMask,analyze,findTip,components,dilate,pose,estF,outDir,detectDart,pulled,autoCal,classify,SECT_ORDER,CAL_MM,CAL_NAMES,R};
+  /* --- Unsicherheit: Wie wahrscheinlich ist welches Feld?
+     C = Kovarianz der Spitzen-Position in mm (2x2). Bei schräger Kamera ist sie in eine Richtung
+     gestreckt, weil dort ein Bildpixel mehr Millimeter auf der Scheibe abdeckt. --- */
+  const ZG=[];{const n=11;let sw=0;for(let i=0;i<n;i++)for(let j=0;j<n;j++){const a=-2.5+5*i/(n-1),b=-2.5+5*j/(n-1),w=Math.exp(-(a*a+b*b)/2);ZG.push([a,b,w]);sw+=w}for(const z of ZG)z[2]/=sw}
+  function fieldProbs(x,y,C){
+    const a=C[0],b=C[1],d=C[3];const l11=Math.sqrt(Math.max(a,1e-6)),l21=b/l11,l22=Math.sqrt(Math.max(d-l21*l21,1e-6));
+    const t={};
+    for(const[z1,z2,w] of ZG){const s=scoreMM(x+l11*z1,y+l21*z1+l22*z2),k=s.l;if(!t[k])t[k]={l:s.l,v:s.v,d:s.d,p:0};t[k].p+=w}
+    return Object.values(t).sort((p,q)=>q.p-p.p);
+  }
+  // Kovarianz aus Bild-Ableitung J (mm pro Pixel, Spalten = Bild-x, Bild-y), Pixel-Unsicherheit und Dart-Achse
+  function tipCov(J,o){
+    o=o||{};const sp=o.sp==null?1.5:o.sp,sa=o.sa==null?2:o.sa,s0=o.s0==null?1.2:o.s0;
+    // Pixel-Kovarianz: rund (sp) + zusätzlich entlang der Dart-Achse im Bild (sa), dort verdeckt das Flight die Spitze
+    let P=[sp*sp,0,0,sp*sp];
+    if(o.ax){const[nx,ny]=o.ax,q=sa*sa;P=[P[0]+q*nx*nx,q*nx*ny,q*nx*ny,P[3]+q*ny*ny]}
+    // C = J P J^T + s0^2 I
+    const[j11,j12,j21,j22]=J;
+    const m11=j11*P[0]+j12*P[2],m12=j11*P[1]+j12*P[3],m21=j21*P[0]+j22*P[2],m22=j21*P[1]+j22*P[3];
+    return[m11*j11+m12*j12+s0*s0,m11*j21+m12*j22,m21*j11+m22*j12,m21*j21+m22*j22+s0*s0];
+  }
+  return{checkout,scoreMM,homog,apply,toGray,matchTo,refineRot,rotMM,diffMask,analyze,findTip,components,dilate,pose,estF,outDir,detectDart,fieldProbs,tipCov,pulled,autoCal,classify,SECT_ORDER,CAL_MM,CAL_NAMES,R};
 })();
 if(typeof module!=="undefined")module.exports=Oche;
 
@@ -728,7 +762,7 @@ function newGame(c){
   cfg=c;
   g={players:c.names.map(n=>({name:n,legs:0,pts:0,darts:0,hi:0,n100:0,n140:0,n180:0,last:null,bestLeg:null,legDarts:0})),
      legStarter:0,turn:0,rem:c.names.map(()=>c.start),visit:[],visitStart:c.start,winner:null,legNo:1};
-  undo=[];toast=null;pendingCo=null;tIn="";
+  undo=[];toast=null;pendingCo=null;tIn="";try{cam.amb=null;cam.seq++}catch(e){}
   save();render();
 }
 function snap(){undo.push(JSON.stringify({g,toast}));if(undo.length>300)undo.shift()}
@@ -758,6 +792,7 @@ function throwDart(v,label,isDbl){
   if(g.winner!==null||pendingCo!==null)return false;
   if(role==="guest"){net.send({a:"dart",v,l:label,d:!!isDbl});setMod(1);return true}
   snap(); if(g.visit.length===0)toast=null;
+  try{cam.seq++;if(!cam.inAuto&&!cam.inPick)afterManual(v,label)}catch(e){}
   const r=g.rem[g.turn]-v;
   g.visit.push({v,l:label});
   if(r<0||(cfg.dbl&&r===1)||(r===0&&cfg.dbl&&!isDbl))endVisit(true,false);
@@ -803,7 +838,8 @@ function undoState(){
   if(role==="guest"){net.send({a:"undo"});return}
   const s=undo.pop();if(!s)return;
   const o=JSON.parse(s);g=o.g;toast=o.toast;save();render();
-  if(mode==="cam"&&cam.markers.length){const m=cam.markers.pop();cam.lastUndone=m&&m.auto?{mm:m.mm,t:Date.now()}:null}
+  try{cam.seq++;cam.amb=null}catch(e){}
+  if(mode==="cam"&&cam.markers.length){const m=cam.markers.pop();cam.lastUndone=m&&m.auto?{mm:m.mm,mb:m.mb,rec:m.rec,t:Date.now()}:null}
 }
 
 function avg(p){return p.darts?(p.pts/p.darts*3).toFixed(1):"–"}
@@ -820,6 +856,7 @@ function render(){
   });
   for(let i=0;i<3;i++){const s=$("s"+i),dt=g.visit[i];s.textContent=dt?(dt.l||""):"";s.className="slot"+(dt?" f":"")}
   $("sum").textContent=visitSum();
+  renderAmb();
   const co=$("co");co.innerHTML="";
   if(toast){const m=document.createElement("span");m.className="msg "+toast.t;m.textContent=toast.m;co.appendChild(m)}
   if(g.winner===null){
@@ -922,7 +959,8 @@ const cam={stream:null,video:document.createElement("video"),proc:document.creat
   drag:-1,dragOff:[0,0],down:null,pinch:null,z:1,px:0.5,py:0.5,msg:"Kamera aus",kind:"",starting:false,
   known:null,waitPull:false,bigCount:0,lastKey:null,P:null,Pkey:"",
   roi:{x:0,y:0,w:1,h:1},hw:{ok:false,min:1,max:1,cur:1,want:1,busy:false,t:null},locked:false,lockInfo:"",
-  needRefine:false,refineInfo:"",corr:[],lastUndone:null};
+  needRefine:false,refineInfo:"",corr:[],lastUndone:null,
+  seq:0,amb:null,ambId:0,inAuto:false,inPick:false,tapMM:null,lastLearn:"",data:[]};
 try{const c=JSON.parse(localStorage.getItem("oche-corr")||"[]");if(Array.isArray(c))cam.corr=c.slice(-10)}catch(e){}
 cam.video.playsInline=true;cam.video.muted=true;cam.video.setAttribute("playsinline","");
 const view=$("view"),vctx=view.getContext("2d");
@@ -944,7 +982,7 @@ $("sens").value=cam.thr;$("sensV").textContent=cam.thr;
 const toMM=(x,y)=>Oche.apply(cam.H2mm,x,y);
 let camNoteT=null;
 function camNotify(){if(role!=="host")return;clearTimeout(camNoteT);camNoteT=setTimeout(()=>net.broadcast(),150)}
-function camInfo(){return{on:!!cam.stream,cal:cam.calMode,has:!!(cam.cal&&cam.cal.length===4),auto:cam.auto,z:cam.z,msg:cam.msg,kind:cam.kind}}
+function camInfo(){return{on:!!cam.stream,cal:cam.calMode,has:!!(cam.cal&&cam.cal.length===4),auto:cam.auto,z:cam.z,msg:cam.msg,kind:cam.kind,amb:ambInfo(),nData:cam.data.length}}
 function status(t,kind){if(t===cam.msg&&(kind||"")===cam.kind)return;cam.msg=t;cam.kind=kind||"";$("camMsg").textContent=t;$("camDot").className="dot"+(kind?" "+kind:"");camNotify()}
 
 /* Zoom: Ausschnitt des Kamerabilds (z = Vergrößerung, px/py = Mitte des Ausschnitts) */
@@ -1063,7 +1101,7 @@ function roiRect(){const[sx,sy,sw,sh]=srcRect(),r=cam.roi;return[sx+r.x*sw,sy+r.
 function grab(){const[sx,sy,sw,sh]=roiRect();pctx.drawImage(cam.video,sx,sy,sw,sh,0,0,cam.W,cam.H);return Oche.toGray(pctx.getImageData(0,0,cam.W,cam.H).data,cam.W*cam.H)}
 function gameKey(){return g.turn+"/"+g.legNo+"/"+g.winner}
 function curName(){return g.winner===null?g.players[g.turn].name:""}
-function resetRound(gray){cam.known=new Uint8Array(cam.W*cam.H);cam.markers=[];cam.waitPull=false;cam.bigCount=0;cam.lastKey=gameKey();if(gray){cam.ref=gray;cam.empty=gray}}
+function resetRound(gray){if(cam.amb){cam.amb=null;try{render()}catch(e){}}cam.known=new Uint8Array(cam.W*cam.H);cam.markers=[];cam.waitPull=false;cam.bigCount=0;cam.lastKey=gameKey();if(gray){cam.ref=gray;cam.empty=gray}}
 function boardPose(){ // Lage der Scheibe im Raum (für die Dart-Richtung), wird bei neuer Kalibrierung/Zoom neu berechnet
   if(!cam.cal||cam.cal.length!==4)return null;
   const key=JSON.stringify(cam.cal)+"|"+cam.z+"|"+cam.px+"|"+cam.py+"|"+cam.W+"|"+JSON.stringify(cam.roi)+"|"+cam.hw.cur;
@@ -1121,14 +1159,25 @@ function evaluate(gray0){
     return}
   cam.bigCount=0;
   if(res.kind==="darts"&&g.winner===null&&pendingCo===null&&g.visit.length<3){
-    const d0=res.darts[0],[nx,ny]=p2n(d0.x*W,d0.y*H),[rx,ry]=toMM(nx,ny),b=bias(),x=rx+b[0],y=ry+b[1],s=Oche.scoreMM(x,y),d={x:nx,y:ny};
+    const d0=res.darts[0],ax=res.line?[res.line.nx,res.line.ny]:null;
+    // Spitze 1,5 px Richtung Flight: in den Tests lag sie im Mittel so viel zu weit vorn
+    let px=d0.x*W,py=d0.y*H;if(ax){px+=ax[0]*1.5;py+=ax[1]*1.5}
+    const [nx,ny]=p2n(px,py),[rx,ry]=toMM(nx,ny),b=bias(),x=rx+b[0],y=ry+b[1],d={x:nx,y:ny};
+    // Wie sicher? J = mm pro Bildpixel an dieser Stelle. Bei schräger Kamera ist J in eine Richtung größer -> dort unsicherer.
+    const J=jacMM(px,py),pr=Oche.fieldProbs(x,y,Oche.tipCov(J,{sp:1.5,sa:2,s0:1.2,ax})),s=pr[0];
+    const alts=pr.length>1&&pr[0].p<AMB_T?pr.filter((q,i)=>i<2||(i<3&&q.p>=0.12)):null;
+    const recId=Date.now();
+    try{dataAdd(makeRec(recId,px,py,refBefore,{det:s.l,dart:g.visit.length+1,p:pr.slice(0,3).map(q=>[q.l,Math.round(q.p*100)]),mm:[+x.toFixed(1),+y.toFixed(1)],raw:[+rx.toFixed(1),+ry.toFixed(1)],bias:b.map(v=>+v.toFixed(1)),J:J.map(v=>+v.toFixed(3)),ax:ax&&ax.map(v=>+v.toFixed(3)),L:res.line?Math.round(res.line.L):0,k:+pxK().toFixed(2),zoom:+cam.z.toFixed(2),hw:cam.hw.ok?+cam.hw.cur.toFixed(2):0,res:[W,H],thr:cam.thr,lock:cam.lockInfo},[x,y]))}catch(e){}
     // Dart-Pixel merken, damit Wackeln/Schatten dieses Darts nicht nochmal zählen
     let km=new Uint8Array(W*H);for(const p of res.px||[])km[p]=1;for(let k=0,n=pxScale(4,2,10);k<n;k++)km=Oche.dilate(km,W,H);
     for(let i=0;i<km.length;i++)if(km[i])cam.known[i]=1;
-    cam.markers.push({x:d.x,y:d.y,l:s.l,auto:true,mm:[rx,ry]});if(cam.markers.length>9)cam.markers.shift();
-    throwDart(s.v,s.l,s.d);
-    if(g.visit.length===0)status("Erkannt: "+s.l+". Aufnahme vorbei – bitte Darts ziehen.","hit");
-    else status("Erkannt: "+s.l+" (Dart "+g.visit.length+"). Falsch? „Zurück“ und Spitze antippen.","hit");
+    cam.markers.push({x:d.x,y:d.y,l:s.l,auto:true,mm:[rx,ry],mb:[x,y],rec:recId});if(cam.markers.length>9)cam.markers.shift();
+    cam.amb=null;cam.inAuto=true;try{throwDart(s.v,s.l,s.d)}finally{cam.inAuto=false}
+    if(alts){cam.amb={id:++cam.ambId,seq:cam.seq,cur:s.l,alts:alts.map(q=>({l:q.l,v:q.v,d:q.d,p:Math.round(q.p*100)})),mb:[x,y],raw:[rx,ry],rec:recId};render()}
+    const q=alts?" Unsicher: "+alts.map(a=>a.l).join(" oder ")+"? – oben antippen.":"";
+    if(g.visit.length===0)status("Erkannt: "+s.l+"."+q+(q?"":" Aufnahme vorbei – bitte Darts ziehen."),alts?"move":"hit");
+    else status("Erkannt: "+s.l+" (Dart "+g.visit.length+")."+(q||" Falsch? „Zurück“ und Spitze antippen."),alts?"move":"hit");
+    camNotify();
   } else {
     status(cam.markers.length?"Bereit – wirf! (Dart "+(g.visit.length+1)+")":"Bereit – "+curName()+" wirft!","ready");
   }
@@ -1141,6 +1190,73 @@ function pxScale(base,lo,hi){
   let k=1;if(cam.cal&&cam.cal.length===4&&cam.Hmm2img){const c=n2p(...Oche.apply(cam.Hmm2img,0,0));let d=0;for(const p of cam.cal){const q=n2p(p[0],p[1]);d+=Math.hypot(q[0]-c[0],q[1]-c[1])}k=d/4/166/0.72}
   return Math.max(lo,Math.min(hi,Math.round(base*k)));
 }
+function pxK(){let k=1;if(cam.cal&&cam.cal.length===4&&cam.Hmm2img){const c=n2p(...Oche.apply(cam.Hmm2img,0,0));let d=0;for(const p of cam.cal){const q=n2p(p[0],p[1]);d+=Math.hypot(q[0]-c[0],q[1]-c[1])}k=d/4/166/0.72}return k}
+// mm auf der Scheibe pro Rechen-Pixel an Stelle (px,py): [dx/dpx, dx/dpy, dy/dpx, dy/dpy]
+function jacMM(px,py){const m=toMM(...p2n(px,py)),a=toMM(...p2n(px+1,py)),b=toMM(...p2n(px,py+1));return[a[0]-m[0],b[0]-m[0],a[1]-m[1],b[1]-m[1]]}
+const AMB_T=0.7; // unter 70 % Sicherheit wird nachgefragt
+
+/* ---- Rückfrage bei unsicheren Würfen ---- */
+function ambInfo(){const a=cam.amb;if(!a||a.seq!==cam.seq||Date.now()-a.rec>60000)return null;return{id:a.id,cur:a.cur,alts:a.alts.map(q=>({l:q.l,p:q.p}))}}
+function renderAmb(){
+  let A=null;try{A=role==="guest"?(rc&&rc.amb):ambInfo()}catch(e){}
+  const el=$("amb");if(!el)return;el.hidden=!A;if(!A){el.innerHTML="";return}
+  el.innerHTML="";const t=document.createElement("div");t.className="q";t.textContent="Unsicher – welches Feld ist es?";el.appendChild(t);
+  A.alts.forEach((q,i)=>{const b=document.createElement("button");b.className=q.l===A.cur?"on":"";
+    b.innerHTML="<b></b><small></small>";b.querySelector("b").textContent=q.l;b.querySelector("small").textContent=q.l===A.cur?"gezählt · "+q.p+" %":q.p+" %";
+    b.onclick=()=>pickAlt(A.id,i);el.appendChild(b)});
+}
+function pickAlt(id,i){
+  if(role==="guest"){net.send({a:"alt",id,i});return}
+  const a=cam.amb;if(!a||a.id!==id)return;const q=a.alts[i];if(!q)return;
+  cam.amb=null;
+  if(a.seq!==cam.seq){render();camNotify();return}
+  if(q.l===a.cur){dataFix(a.rec,{l:q.l,how:"bestätigt"});status("Bestätigt: "+q.l,"hit");render();camNotify();return}
+  const s=undo.pop();if(!s){render();return}const o=JSON.parse(s);g=o.g;toast=o.toast;
+  cam.inPick=true;try{throwDart(q.v,q.l,q.d)}finally{cam.inPick=false}
+  for(const m of cam.markers)if(m.rec===a.rec)m.l=q.l;
+  dataFix(a.rec,{l:q.l,how:"wahl"});
+  const L=learnField(a.mb,a.raw,q.l);
+  status("Geändert auf "+q.l+(L?" – Korrektur gelernt":""),"hit");render();camNotify();
+}
+// Kleinste Verschiebung vom erkannten Punkt ins richtige Feld (+1 mm hinein) -> als Korrektur merken
+function learnField(mb,raw,label){
+  if(!mb||!raw)return false;let best=null;
+  for(let r=0.5;r<=12&&!best;r+=0.5)for(let a=0;a<360;a+=7.5){const x=mb[0]+r*Math.sin(a*Math.PI/180),y=mb[1]+r*Math.cos(a*Math.PI/180);if(Oche.scoreMM(x,y).l===label){best=[x,y,r];break}}
+  if(!best)return false;const f=(best[2]+1)/best[2],tx=mb[0]+(best[0]-mb[0])*f,ty=mb[1]+(best[1]-mb[1])*f;
+  pushCorr([tx-raw[0],ty-raw[1]]);return cam.corr.length>=2;
+}
+function pushCorr(v){if(Math.hypot(v[0],v[1])>=35)return;cam.corr.push(v);if(cam.corr.length>10)cam.corr.shift();try{localStorage.setItem("oche-corr",JSON.stringify(cam.corr))}catch(e){}}
+// Nach „Zurück“ von Hand eingetragen (Antippen im Bild, Tastatur oder vom zweiten Handy)
+function afterManual(v,label){
+  cam.lastLearn="";const u=cam.lastUndone;if(!u||Date.now()-u.t>90000)return;cam.lastUndone=null;
+  const tap=cam.tapMM;
+  dataFix(u.rec,{l:label,how:tap?"tippen":"eingabe",mm:tap?tap.map(z=>+z.toFixed(1)):undefined});
+  if(tap){pushCorr([tap[0]-u.mm[0],tap[1]-u.mm[1]]);if(cam.corr.length>=2)cam.lastLearn=" – Korrektur gelernt"}
+  else if(learnField(u.mb,u.mm,label))cam.lastLearn=" – Korrektur gelernt";
+}
+
+/* ---- Lerndaten: kleines Bild + Erkennung + Korrektur zu jedem Dart ---- */
+try{cam.data=JSON.parse(localStorage.getItem("oche-data")||"[]")||[]}catch(e){cam.data=[]}
+let dataT=null;
+function dataSaveLS(){clearTimeout(dataT);dataT=setTimeout(()=>{for(let k=0;k<8;k++){try{localStorage.setItem("oche-data",JSON.stringify(cam.data));return}catch(e){if(cam.data.length<=4)return;cam.data.splice(0,4)}}},400)}
+function dataAdd(r){cam.data.push(r);while(cam.data.length>40)cam.data.shift();dataSaveLS()}
+function dataFix(id,f){const r=cam.data.find(r=>r.id===id);if(r){r.fix=f;dataSaveLS()}}
+function makeRec(id,px,py,refGray,info,mm){
+  const S=128,W=cam.W,H=cam.H,x0=Math.round(px-S/2),y0=Math.round(py-S/2);
+  const cv=document.createElement("canvas");cv.width=S;cv.height=S;const x=cv.getContext("2d");
+  const r={id,t:new Date().toISOString(),...info,fix:null,crop:{x0,y0,tip:[+(px-x0).toFixed(1),+(py-y0).toFixed(1)]}};
+  if(refGray&&refGray.length===W*H){const im=x.createImageData(S,S);
+    for(let j=0;j<S;j++)for(let i=0;i<S;i++){const X=x0+i,Y=y0+j,o=(j*S+i)*4,v=(X>=0&&Y>=0&&X<W&&Y<H)?refGray[Y*W+X]:0;im.data[o]=im.data[o+1]=im.data[o+2]=v;im.data[o+3]=255}
+    x.putImageData(im,0,0);r.vorher=cv.toDataURL("image/jpeg",0.6)}
+  x.putImageData(pctx.getImageData(x0,y0,S,S),0,0);r.nachher=cv.toDataURL("image/jpeg",0.6);
+  gridOn(x,-x0,-y0,W,H);x.strokeStyle="#ff3b30";x.lineWidth=1.5;x.beginPath();x.arc(px-x0,py-y0,4,0,7);x.stroke();r.raster=cv.toDataURL("image/jpeg",0.6);
+  if(cam.Hmm2img)r.crop.pts=[[-30,-30],[30,-30],[30,30],[-30,30]].map(([dx,dy])=>{const X=mm[0]+dx,Y=mm[1]+dy,[u,v]=n2p(...Oche.apply(cam.Hmm2img,X,Y));return[+X.toFixed(1),+Y.toFixed(1),+(u-x0).toFixed(1),+(v-y0).toFixed(1)]});
+  return r;
+}
+function dataJSON(){return JSON.stringify({app:"180!",version:9,erstellt:new Date().toISOString(),geraet:navigator.userAgent,korrektur:bias(),wuerfe:cam.data})}
+function downloadText(txt,name){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([txt],{type:"application/json"}));a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},2000)}
+function dataName(){const d=new Date(),z=n=>String(n).padStart(2,"0");return"180-lerndaten-"+d.getFullYear()+z(d.getMonth()+1)+z(d.getDate())+"-"+z(d.getHours())+z(d.getMinutes())+".json"}
+
 /* Gelernte Korrektur aus „Zurück“ + Antippen (Median, höchstens 15 mm) */
 function bias(){
   const c=cam.corr;if(!c||c.length<2)return[0,0];
@@ -1361,13 +1477,9 @@ function ptrEnd(e){
   if(!d||d.moved||e.type!=="pointerup"||cam.calMode||!cam.H2mm)return;
   const[x,y]=pos(e);if(Math.hypot(x-d.x,y-d.y)>0.03)return;
   const[mx,my]=toMM(x,y),s=Oche.scoreMM(mx,my);
-  if(throwDart(s.v,s.l,s.d)){cam.markers.push({x,y,l:s.l});
-    // Korrektur merken: wo hätte die Spitze sein müssen? Daraus lernt die App eine feste Verschiebung.
-    const u=cam.lastUndone;cam.lastUndone=null;let extra="";
-    if(u&&Date.now()-u.t<90000){const dx=mx-u.mm[0],dy=my-u.mm[1];
-      if(Math.hypot(dx,dy)<35){cam.corr.push([dx,dy]);if(cam.corr.length>10)cam.corr.shift();try{localStorage.setItem("oche-corr",JSON.stringify(cam.corr))}catch(e){}
-        if(cam.corr.length>=2)extra=" – Korrektur gelernt"}}
-    status("Von Hand gesetzt: "+s.l+extra,"hit")}
+  // Korrektur merken: wo hätte die Spitze sein müssen? (passiert in afterManual)
+  cam.tapMM=[mx,my];let ok=false;try{ok=throwDart(s.v,s.l,s.d)}finally{cam.tapMM=null}
+  if(ok){cam.markers.push({x,y,l:s.l});status("Von Hand gesetzt: "+s.l+cam.lastLearn,"hit")}
 }
 view.addEventListener("pointerup",ptrEnd);view.addEventListener("pointercancel",ptrEnd);
 
@@ -1385,6 +1497,8 @@ $("zIn").onclick=()=>setZoom(cam.z*1.25,cam.px,cam.py);
 $("zOut").onclick=()=>setZoom(cam.z/1.25,cam.px,cam.py);
 $("sens").oninput=e=>{cam.thr=+e.target.value;$("sensV").textContent=cam.thr;try{localStorage.setItem("oche-sens",cam.thr)}catch(_){}};
 $("showDiff").onchange=e=>cam.showDiff=e.target.checked;
+$("dataSave").onclick=()=>{if(!cam.data.length){status("Noch keine Lerndaten – erst ein paar Darts werfen.","move");return}downloadText(dataJSON(),dataName());status("Lerndaten gespeichert ("+cam.data.length+" Würfe).","ready")};
+$("dataClear").onclick=()=>{cam.data=[];try{localStorage.removeItem("oche-data")}catch(e){}status("Lerndaten gelöscht.","ready")};
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden"&&cam.stream)stopCam()});
 zoomUI();
 
@@ -1405,6 +1519,7 @@ $("liveCal").onclick=()=>camCmd("cal");$("liveRecal").onclick=()=>camCmd("cal");
 $("liveOk").onclick=()=>camCmd("ok");$("liveRot").onclick=()=>camCmd("rot");
 $("liveEmpty").onclick=()=>camCmd("empty");
 $("liveSnap").onclick=()=>{camCmd("snap");toast={t:"info",m:"Fehlerbild wird geholt …"};render()};
+$("liveData").onclick=()=>{camCmd("data");toast={t:"info",m:"Lerndaten werden geholt …"};render()};
 $("liveZin").onclick=()=>camCmd("zin");$("liveZout").onclick=()=>camCmd("zout");
 liveUI();
 
@@ -1439,7 +1554,8 @@ function startHost(code){
   peer.on("open",()=>{hostStatus()});
   peer.on("connection",c=>{
     c.on("open",()=>{conns.push(c);hostStatus();try{c.send(stateMsg())}catch(e){}if(cam.stream)callOne(c.peer)});
-    c.on("data",d=>{if(d&&d.t==="act"&&d.a==="cam"&&d.c==="snap"){try{c.send({t:"snap",url:cam.stream?makeSnap():null})}catch(e){}return}hostAct(d)});
+    c.on("data",d=>{if(d&&d.t==="act"&&d.a==="cam"&&d.c==="snap"){try{c.send({t:"snap",url:cam.stream?makeSnap():null})}catch(e){}return}
+      if(d&&d.t==="act"&&d.a==="cam"&&d.c==="data"){try{c.send({t:"data",n:cam.data.length,json:cam.data.length?dataJSON():null})}catch(e){}return}hostAct(d)});
     c.on("close",()=>{conns=conns.filter(x=>x!==c);hostStatus()});
     c.on("error",()=>{});
   });
@@ -1455,6 +1571,7 @@ function hostAct(d){
   const v=Math.round(+d.v||0);
   if(d.a==="dart"){if(v<0||v>60)return;throwDart(v,String(d.l||v).slice(0,5),!!d.d)}
   else if(d.a==="undo")undoState();
+  else if(d.a==="alt")pickAlt(Math.round(+d.id),Math.round(+d.i));
   else if(d.a==="total"){if(v<0||v>180)return;doTotal(v)}
   else if(d.a==="co"){const n=Math.round(+d.n);if(n<1||n>3)return;applyCo(v,n)}
   else if(d.a==="cam"){if(["cal","ok","rot","empty","zin","zout"].includes(d.c))camRemote(d.c)}
@@ -1489,6 +1606,7 @@ function connectHost(){
   const c=peer.connect(PREFIX+joinCode,{reliable:true});hostConn=c;
   c.on("open",()=>{role="guest";pendingCo=null;tIn="";$("guestTitle").textContent="Gekoppelt mit Code "+joinCode;$("guestState").textContent="Du siehst jetzt das Spiel vom Kamera-Handy.";chip("Gekoppelt","ready");setTimeout(()=>{if(!$("netSheet").hidden)$("netSheet").hidden=true},900)});
   c.on("data",d=>{if(d&&d.t==="snap"){if(d.url)showSnap(d.url);else{toast={t:"bust",m:"Kamera am Kamera-Handy ist aus."};render()}return}
+    if(d&&d.t==="data"){if(d.json){downloadText(d.json,dataName());toast={t:"info",m:"Lerndaten gespeichert ("+d.n+" Würfe). Schick die Datei an Claude."}}else toast={t:"bust",m:"Noch keine Lerndaten auf dem Kamera-Handy."};render();return}
     if(d&&d.t==="state"&&d.g&&d.cfg){g=d.g;cfg=d.cfg;toast=d.toast||null;if(d.cam)rc=d.cam;render();liveUI()}});
   c.on("close",()=>{if(hostConn===c){hostConn=null;if(joinCode){chip("Getrennt","hit");$("guestTitle").textContent="Verbindung verloren";$("guestState").textContent="Ich verbinde automatisch neu …";scheduleRetry()}}});
   c.on("error",()=>{});
